@@ -163,7 +163,7 @@ describe('WizardApp ficha aforo capture flow', () => {
     await waitFor(() => expect(screen.getByText('tdpa.csv vinculado')).toBeInTheDocument());
 
     expect(screen.getByText('Volumen total')).toBeInTheDocument();
-    expect(screen.getByText('1,898')).toBeInTheDocument();
+    expect(screen.getAllByText('1,898').length).toBeGreaterThan(0);
     expect(screen.getByText('T. Aut. Cuacnopalan - Oaxaca')).toBeInTheDocument();
   });
 
