@@ -3,6 +3,7 @@ import type {
   CaptureRow,
   IntervalBlock,
   MovementKey,
+  RowValidationResult,
   SignalProgram,
   StudySummary,
 } from './types';
@@ -58,22 +59,23 @@ export function calculateRowMotorizedTotal(row: CaptureRow, access: AccessConfig
   }, 0);
 }
 
-export function validateCaptureRow(row: CaptureRow, access: AccessConfig): string[] {
-  const issues: string[] = [];
+export function validateCaptureRowDetailed(row: CaptureRow, access: AccessConfig): RowValidationResult {
+  const incompleteIssues: string[] = [];
+  const errorIssues: string[] = [];
 
   for (const key of movementKeys) {
     if (!access.movements[key]) {
       if (row[key] !== null) {
-        issues.push(`${movementLabels[key]} debe permanecer como N/A.`);
+        errorIssues.push(`${movementLabels[key]} debe permanecer como N/A.`);
       }
       continue;
     }
 
     const value = row[key];
     if (isMissing(value)) {
-      issues.push(`Falta ${movementLabels[key].toLowerCase()}.`);
+      incompleteIssues.push(`Falta ${movementLabels[key].toLowerCase()}.`);
     } else if (!Number.isInteger(value) || value < 0) {
-      issues.push(`${movementLabels[key]} debe ser entero mayor o igual a cero.`);
+      errorIssues.push(`${movementLabels[key]} debe ser entero mayor o igual a cero.`);
     }
   }
 
@@ -84,14 +86,18 @@ export function validateCaptureRow(row: CaptureRow, access: AccessConfig): strin
     ['Peatones', row.pedestrians],
   ] as const) {
     if (isMissing(value)) {
-      issues.push(`Falta ${label.toLowerCase()}.`);
+      incompleteIssues.push(`Falta ${label.toLowerCase()}.`);
     } else if (!Number.isInteger(value) || value < 0) {
-      issues.push(`${label} debe ser entero mayor o igual a cero.`);
+      errorIssues.push(`${label} debe ser entero mayor o igual a cero.`);
     }
   }
 
-  if (valueOrZero(row.heavy) + valueOrZero(row.motorcycles) > calculateRowMotorizedTotal(row, access)) {
-    issues.push('Pesados + motos supera el total motorizado.');
+  if (
+    !isMissing(row.heavy) &&
+    !isMissing(row.motorcycles) &&
+    valueOrZero(row.heavy) + valueOrZero(row.motorcycles) > calculateRowMotorizedTotal(row, access)
+  ) {
+    errorIssues.push('Pesados + motos supera el total motorizado.');
   }
 
   for (const [label, value] of [
@@ -102,11 +108,20 @@ export function validateCaptureRow(row: CaptureRow, access: AccessConfig): strin
     ['Ciclo observado', row.observedCycle],
   ] as const) {
     if (!isMissing(value) && (!Number.isFinite(value) || value < 0)) {
-      issues.push(`${label} debe ser mayor o igual a cero.`);
+      errorIssues.push(`${label} debe ser mayor o igual a cero.`);
     }
   }
 
-  return issues;
+  const issues = [...errorIssues, ...incompleteIssues];
+  return {
+    rowId: row.id,
+    state: errorIssues.length > 0 ? 'error' : incompleteIssues.length > 0 ? 'incomplete' : 'complete',
+    issues,
+  };
+}
+
+export function validateCaptureRow(row: CaptureRow, access: AccessConfig): string[] {
+  return validateCaptureRowDetailed(row, access).issues;
 }
 
 export function createEmptyCaptureRows(intervals: IntervalBlock[], accesses: AccessConfig[]): CaptureRow[] {
@@ -119,14 +134,14 @@ export function createEmptyCaptureRows(intervals: IntervalBlock[], accesses: Acc
       intervalEnd: interval.end,
       accessId: access.id,
       accessName: access.name,
-      left: access.movements.left ? 0 : null,
-      through: access.movements.through ? 0 : null,
-      right: access.movements.right ? 0 : null,
-      uTurn: access.movements.uTurn ? 0 : null,
-      heavy: 0,
-      motorcycles: 0,
-      bicycles: 0,
-      pedestrians: 0,
+      left: null,
+      through: null,
+      right: null,
+      uTurn: null,
+      heavy: null,
+      motorcycles: null,
+      bicycles: null,
+      pedestrians: null,
       maxQueue: null,
       averageQueue: null,
       queueLength: null,
@@ -145,8 +160,24 @@ export function calculateStudySummary(
   signalInput: SignalCalculationInput = {},
 ): StudySummary {
   const accessById = new Map(accesses.map((access) => [access.id, access]));
-  const issues = rows.flatMap((row) => validateCaptureRow(row, accessById.get(row.accessId) ?? accesses[0]));
-  const totalForRow = (row: CaptureRow) => calculateRowMotorizedTotal(row, accessById.get(row.accessId) ?? accesses[0]);
+  const fallbackAccess = accesses[0];
+  const rowValidation = rows.map((row) => {
+    const access = accessById.get(row.accessId) ?? fallbackAccess;
+    if (!access) {
+      return { rowId: row.id, state: 'error' as const, issues: ['Acceso no configurado.'] };
+    }
+    return validateCaptureRowDetailed(row, access);
+  });
+  const issues = rowValidation.flatMap((result) => result.issues);
+  const completeRows = rowValidation.filter((result) => result.state === 'complete').length;
+  const incompleteRows = rowValidation.filter((result) => result.state === 'incomplete').length;
+  const errorRows = rowValidation.filter((result) => result.state === 'error').length;
+  const completionPercent = rows.length > 0 ? (completeRows / rows.length) * 100 : 0;
+  const isComplete = rows.length > 0 && completeRows === rows.length && errorRows === 0;
+  const totalForRow = (row: CaptureRow) => {
+    const access = accessById.get(row.accessId) ?? fallbackAccess;
+    return access ? calculateRowMotorizedTotal(row, access) : 0;
+  };
 
   const intervalRows = new Map<string, CaptureRow[]>();
   for (const row of rows) {
@@ -155,6 +186,7 @@ export function calculateStudySummary(
     intervalRows.set(row.intervalId, current);
   }
 
+  const rowValidationById = new Map(rowValidation.map((result) => [result.rowId, result]));
   const byInterval = Array.from(intervalRows.entries()).map(([intervalId, groupedRows]) => {
     const first = groupedRows[0];
     return {
@@ -172,11 +204,13 @@ export function calculateStudySummary(
       bicycles: groupedRows.reduce((total, row) => total + valueOrZero(row.bicycles), 0),
       pedestrians: groupedRows.reduce((total, row) => total + valueOrZero(row.pedestrians), 0),
       notes: combineNotes(groupedRows),
+      complete: groupedRows.every((row) => rowValidationById.get(row.id)?.state === 'complete'),
     };
   });
 
   const totalMotorized = rows.reduce((total, row) => total + totalForRow(row), 0);
-  const peakInterval = byInterval.reduce<{ label: string; volume: number } | null>((best, item) => {
+  const validIntervals = byInterval.filter((item) => item.complete);
+  const peakInterval = validIntervals.reduce<{ label: string; volume: number } | null>((best, item) => {
     if (!best || item.total > best.volume) {
       return { label: item.label, volume: item.total };
     }
@@ -195,8 +229,8 @@ export function calculateStudySummary(
         volume,
         maxIntervalVolume,
         factor: maxIntervalVolume > 0 ? volume / (slotsPerHour * maxIntervalVolume) : null,
-        factorLabel: intervalMinutes === 15 ? 'FHP' : 'Factor de uniformidad de hora pico',
-      } as const;
+        factorLabel: intervalMinutes === 15 ? ('FHP' as const) : ('Factor de uniformidad de hora pico' as const),
+      };
       if (!peakHour || candidate.volume > peakHour.volume) {
         peakHour = candidate;
       }
@@ -259,8 +293,6 @@ export function calculateStudySummary(
   const peakHourFlow = peakHour?.volume ?? null;
   const volumeCapacityRatio = peakHourFlow !== null && capacity !== null && capacity > 0 ? peakHourFlow / capacity : null;
 
-  const completeRows = rows.length - new Set(issues).size;
-
   return {
     totalMotorized,
     totalHeavy: rows.reduce((total, row) => total + valueOrZero(row.heavy), 0),
@@ -283,8 +315,17 @@ export function calculateStudySummary(
       capacity,
       volumeCapacityRatio,
     },
+    completeRows,
+    incompleteRows,
+    errorRows,
+    completionPercent,
+    isComplete,
+    isPartial: !isComplete,
+    rowValidation,
     dataQuality: [
-      `${Math.max(0, completeRows)} filas revisadas`,
+      `${completeRows}/${rows.length} filas completas (${completionPercent.toFixed(1)}%)`,
+      `${incompleteRows} filas incompletas`,
+      `${errorRows} filas con error`,
       `${accesses.length} accesos configurados`,
       issues.length === 0 ? 'Sin errores obligatorios' : `${issues.length} observaciones por revisar`,
       capacity !== null && volumeCapacityRatio !== null
