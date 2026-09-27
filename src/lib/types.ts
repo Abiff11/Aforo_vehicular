@@ -183,6 +183,8 @@ export interface StoredState {
   intersectionConfigs: Record<string, IntersectionConfig>;
   lastConfiguration: IntersectionConfig | null;
   activeStudy: Study | null;
+  studyTemplate?: StudyMetadata;
+  studiesByIntersection?: Record<string, Study>;
   preferences: {
     intervalMinutes: number;
   };
