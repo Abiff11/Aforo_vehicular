@@ -6,35 +6,16 @@ import {
   CheckCircle2,
   CircleHelp,
   Download,
-  FileSpreadsheet,
-  RefreshCw,
   Save,
   Upload,
   X,
 } from 'lucide-react';
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Legend,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import { intersections } from '../data/intersections';
 import { wizardSteps } from '../data/tutorial';
 import { calculateRowMotorizedTotal, calculateStudySummary } from '../lib/calculations';
 import { downloadStudyWorkbook } from '../lib/exportExcel';
 import {
   calculateRoadTrafficProfile,
-  createCorridorTrafficStudies,
-  getCorridorName,
+  createTrafficStudyForIntersection,
   parseRoadTrafficCsv,
 } from '../lib/roadTrafficImport';
 import {
@@ -48,7 +29,7 @@ import {
 } from '../lib/study';
 import { createInitialState, loadStoredState, saveStoredState } from '../lib/storage';
 import type { CorridorTrafficStudy, RoadTrafficProfile } from '../lib/roadTrafficImport';
-import type { CaptureRow, MovementKey, StoredState, Study } from '../lib/types';
+import type { CaptureRow, Intersection, MovementKey, StoredState, Study } from '../lib/types';
 import { IntersectionMap } from './IntersectionMap';
 
 const movementLabels: Record<MovementKey, string> = {
@@ -57,9 +38,12 @@ const movementLabels: Record<MovementKey, string> = {
   right: 'Der',
   uTurn: 'Retorno',
 };
-const palette = ['#1f6feb', '#16a34a', '#f97316', '#7c3aed'];
+
+const UNASSIGNED_INTERSECTION_ID = '__UNASSIGNED__';
+const numberFormat = new Intl.NumberFormat('es-MX');
 
 interface RoadTrafficImportState {
+  fileName: string;
   corridorName: string;
   point: string;
   profile: RoadTrafficProfile;
@@ -106,10 +90,7 @@ function updateStudyMetadata(
 ): Study {
   const next: Study = {
     ...study,
-    metadata: {
-      ...study.metadata,
-      [field]: value,
-    },
+    metadata: { ...study.metadata, [field]: value },
     updatedAt: new Date().toISOString(),
   };
 
@@ -137,18 +118,35 @@ function readFileText(file: File): Promise<string> {
   });
 }
 
-function getStreetNames(intersectionName: string): string[] {
-  return intersectionName
-    .split('/')
-    .map((street) => street.trim())
-    .filter(Boolean);
+function parseOptionalNumber(value: string): number | null {
+  return value === '' ? null : Number(value);
 }
 
-function shareStreetName(sourceName: string, candidateName: string): boolean {
-  const sourceStreets = getStreetNames(sourceName);
-  const candidateStreets = getStreetNames(candidateName);
+function formatNullable(value: number | null, digits = 0): string {
+  if (value === null || !Number.isFinite(value)) return 'N/D';
+  return value.toLocaleString('es-MX', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
 
-  return sourceStreets.some((sourceStreet) => candidateStreets.includes(sourceStreet));
+function createIntersection(latitude: number, longitude: number, existing: Intersection[]): Intersection {
+  const mapNumber = existing.reduce((maximum, intersection) => Math.max(maximum, intersection.mapNumber), 0) + 1;
+  const suffix = String(mapNumber).padStart(3, '0');
+
+  return {
+    id: `INT-${suffix}`,
+    mapNumber,
+    name: `Interseccion ${suffix}`,
+    municipality: 'Oaxaca de Juárez',
+    locality: 'Oaxaca de Juárez',
+    verificationStatus: 'pending',
+    latitude,
+    longitude,
+    notes: '',
+    linkedCsvFileName: undefined,
+    relatedIntersectionIds: [],
+  };
 }
 
 export function WizardApp() {
@@ -156,10 +154,17 @@ export function WizardApp() {
   const [helpStepIndex, setHelpStepIndex] = useState<number | null>(null);
   const [roadTrafficImport, setRoadTrafficImport] = useState<RoadTrafficImportState | null>(null);
   const [roadTrafficImportError, setRoadTrafficImportError] = useState<string | null>(null);
-  const activeStudy = state.activeStudy ?? createDefaultStudy(intersections[0].id);
-  const activeHelp = helpStepIndex === null ? null : wizardSteps[helpStepIndex];
+
+  const customIntersections = state.customIntersections ?? [];
+  const persistedStudy =
+    state.activeStudy && customIntersections.some((intersection) => intersection.id === state.activeStudy?.intersectionId)
+      ? state.activeStudy
+      : null;
+  const activeStudy = persistedStudy ?? createDefaultStudy(UNASSIGNED_INTERSECTION_ID);
   const selectedIntersection =
-    intersections.find((intersection) => intersection.id === activeStudy.intersectionId) ?? intersections[0];
+    customIntersections.find((intersection) => intersection.id === activeStudy.intersectionId) ?? null;
+  const activeHelp = helpStepIndex === null ? null : wizardSteps[helpStepIndex];
+
   const summary = useMemo(
     () =>
       calculateStudySummary(
@@ -173,26 +178,14 @@ export function WizardApp() {
       ),
     [activeStudy],
   );
-  const intervalChart = useMemo(
-    () => summary.byInterval.map((interval) => ({ interval: interval.label, volume: interval.total })),
-    [summary.byInterval],
-  );
-  const relatedIntersectionIds = activeStudy.relatedIntersectionIds ?? [];
+
+  const relatedIntersectionIds = selectedIntersection?.relatedIntersectionIds ?? activeStudy.relatedIntersectionIds ?? [];
   const linkedIntersectionOptions = useMemo(
     () =>
-      [...intersections]
-        .filter((intersection) => intersection.id !== selectedIntersection.id)
-        .sort((left, right) => {
-          const leftRelated = shareStreetName(selectedIntersection.name, left.name);
-          const rightRelated = shareStreetName(selectedIntersection.name, right.name);
-
-          if (leftRelated !== rightRelated) {
-            return leftRelated ? -1 : 1;
-          }
-
-          return left.mapNumber - right.mapNumber;
-        }),
-    [selectedIntersection],
+      customIntersections
+        .filter((intersection) => intersection.id !== selectedIntersection?.id)
+        .sort((left, right) => left.mapNumber - right.mapNumber),
+    [customIntersections, selectedIntersection?.id],
   );
 
   function persist(nextState: StoredState): void {
@@ -204,75 +197,157 @@ export function WizardApp() {
     persist({ ...state, activeStudy: study });
   }
 
-  async function importRoadTrafficCsv(files: FileList | null): Promise<void> {
-    const file = files?.[0];
-    if (!file) return;
-
-    try {
-      const [record] = parseRoadTrafficCsv(await readFileText(file));
-      if (!record) {
-        throw new Error('El CSV no contiene registros de TDPA.');
-      }
-
-      const studies = createCorridorTrafficStudies(record, intersections);
-      if (studies.length === 0) {
-        throw new Error('No se encontraron intersecciones del corredor.');
-      }
-
-      const corridorName = getCorridorName(intersections, studies[0].intersection.id);
-      const nextImport = {
-        corridorName,
-        point: record.point,
-        profile: calculateRoadTrafficProfile(record),
-        studies,
-      };
-
-      setRoadTrafficImport(nextImport);
-      setRoadTrafficImportError(null);
-      persist({ ...state, activeStudy: studies[0].study });
-    } catch (error) {
-      setRoadTrafficImport(null);
-      setRoadTrafficImportError(error instanceof Error ? error.message : 'No se pudo importar el CSV TDPA.');
-    }
-  }
-
-  function startStudy(intersectionId: string): void {
-    const existingConfig = state.intersectionConfigs[intersectionId];
-    const fallbackStudy = createDefaultStudy(intersectionId);
-    const study = existingConfig
+  function buildStudyForIntersection(intersection: Intersection): Study {
+    const existingConfig = state.intersectionConfigs[intersection.id];
+    const fallbackStudy = createDefaultStudy(intersection.id);
+    const configuredStudy = existingConfig
       ? { ...fallbackStudy, configurationSnapshot: existingConfig }
       : state.lastConfiguration
         ? {
             ...fallbackStudy,
             configurationSnapshot: {
               ...state.lastConfiguration,
-              intersectionId,
+              intersectionId: intersection.id,
               inherited: true,
               updatedAt: new Date().toISOString(),
             },
           }
         : fallbackStudy;
 
-    persist({ ...state, activeStudy: study });
+    return {
+      ...configuredStudy,
+      relatedIntersectionIds: intersection.relatedIntersectionIds ?? [],
+    };
   }
 
-  function toggleRelatedIntersection(intersectionId: string): void {
-    const nextRelatedIntersectionIds = relatedIntersectionIds.includes(intersectionId)
-      ? relatedIntersectionIds.filter((id) => id !== intersectionId)
-      : [...relatedIntersectionIds, intersectionId];
+  function addIntersection(latitude: number, longitude: number): void {
+    const intersection = createIntersection(latitude, longitude, customIntersections);
+    const nextIntersections = [...customIntersections, intersection];
+    const study = buildStudyForIntersection(intersection);
 
-    setActiveStudy({
+    setRoadTrafficImport(null);
+    setRoadTrafficImportError(null);
+    persist({ ...state, customIntersections: nextIntersections, activeStudy: study });
+  }
+
+  function startStudy(intersectionId: string): void {
+    const intersection = customIntersections.find((candidate) => candidate.id === intersectionId);
+    if (!intersection) return;
+
+    if (persistedStudy?.intersectionId === intersectionId) {
+      return;
+    }
+
+    setRoadTrafficImport(null);
+    setRoadTrafficImportError(null);
+    persist({ ...state, activeStudy: buildStudyForIntersection(intersection) });
+  }
+
+  function updateIntersection(changes: Partial<Omit<Intersection, 'id' | 'mapNumber'>>): void {
+    if (!selectedIntersection) return;
+
+    const nextIntersections = customIntersections.map((intersection) =>
+      intersection.id === selectedIntersection.id ? { ...intersection, ...changes } : intersection,
+    );
+    persist({ ...state, customIntersections: nextIntersections, activeStudy: activeStudy });
+  }
+
+  function renameIntersection(rawId: string): void {
+    if (!selectedIntersection) return;
+    const nextId = rawId.trim().toUpperCase();
+    if (!nextId || nextId === selectedIntersection.id) return;
+    if (customIntersections.some((intersection) => intersection.id === nextId)) return;
+
+    const oldId = selectedIntersection.id;
+    const nextIntersections = customIntersections.map((intersection) => ({
+      ...intersection,
+      id: intersection.id === oldId ? nextId : intersection.id,
+      relatedIntersectionIds: (intersection.relatedIntersectionIds ?? []).map((id) => (id === oldId ? nextId : id)),
+    }));
+
+    const existingConfig = state.intersectionConfigs[oldId];
+    const nextConfigs = { ...state.intersectionConfigs };
+    if (existingConfig) {
+      delete nextConfigs[oldId];
+      nextConfigs[nextId] = { ...existingConfig, intersectionId: nextId };
+    }
+
+    const nextStudy: Study = {
       ...activeStudy,
-      relatedIntersectionIds: nextRelatedIntersectionIds,
+      intersectionId: nextId,
+      relatedIntersectionIds: activeStudy.relatedIntersectionIds.map((id) => (id === oldId ? nextId : id)),
+      configurationSnapshot: { ...activeStudy.configurationSnapshot, intersectionId: nextId },
       updatedAt: new Date().toISOString(),
+    };
+
+    persist({
+      ...state,
+      customIntersections: nextIntersections,
+      intersectionConfigs: nextConfigs,
+      activeStudy: nextStudy,
+      lastConfiguration:
+        state.lastConfiguration?.intersectionId === oldId
+          ? { ...state.lastConfiguration, intersectionId: nextId }
+          : state.lastConfiguration,
     });
   }
 
+  function toggleRelatedIntersection(intersectionId: string): void {
+    if (!selectedIntersection) return;
+
+    const nextRelatedIntersectionIds = relatedIntersectionIds.includes(intersectionId)
+      ? relatedIntersectionIds.filter((id) => id !== intersectionId)
+      : [...relatedIntersectionIds, intersectionId];
+    const nextIntersections = customIntersections.map((intersection) =>
+      intersection.id === selectedIntersection.id
+        ? { ...intersection, relatedIntersectionIds: nextRelatedIntersectionIds }
+        : intersection,
+    );
+    const nextStudy = {
+      ...activeStudy,
+      relatedIntersectionIds: nextRelatedIntersectionIds,
+      updatedAt: new Date().toISOString(),
+    };
+
+    persist({ ...state, customIntersections: nextIntersections, activeStudy: nextStudy });
+  }
+
+  async function importRoadTrafficCsv(files: FileList | null): Promise<void> {
+    const file = files?.[0];
+    if (!file || !selectedIntersection) return;
+
+    try {
+      const [record] = parseRoadTrafficCsv(await readFileText(file));
+      if (!record) throw new Error('El CSV no contiene registros de TDPA.');
+
+      const linkedIntersection = { ...selectedIntersection, linkedCsvFileName: file.name };
+      const imported = createTrafficStudyForIntersection(record, linkedIntersection, activeStudy);
+      const nextIntersections = customIntersections.map((intersection) =>
+        intersection.id === linkedIntersection.id ? linkedIntersection : intersection,
+      );
+
+      setRoadTrafficImport({
+        fileName: file.name,
+        corridorName: linkedIntersection.name,
+        point: record.point,
+        profile: calculateRoadTrafficProfile(record),
+        studies: [imported],
+      });
+      setRoadTrafficImportError(null);
+      persist({ ...state, customIntersections: nextIntersections, activeStudy: imported.study });
+    } catch (error) {
+      setRoadTrafficImport(null);
+      setRoadTrafficImportError(error instanceof Error ? error.message : 'No se pudo importar el CSV TDPA.');
+    }
+  }
+
   function goToStep(index: number): void {
+    if (!selectedIntersection && index > 0) return;
     setActiveStudy({ ...activeStudy, currentStep: Math.max(0, Math.min(index, wizardSteps.length - 1)) });
   }
 
   function saveConfiguration(): void {
+    if (!selectedIntersection) return;
     const config = { ...activeStudy.configurationSnapshot, inherited: false, updatedAt: new Date().toISOString() };
     persist({
       ...state,
@@ -283,12 +358,9 @@ export function WizardApp() {
   }
 
   function exportExcel(): void {
+    if (!selectedIntersection) return;
     downloadStudyWorkbook(activeStudy, selectedIntersection);
     setActiveStudy({ ...activeStudy, status: 'exported' });
-  }
-
-  function parseOptionalNumber(value: string): number | null {
-    return value === '' ? null : Number(value);
   }
 
   return (
@@ -354,77 +426,130 @@ export function WizardApp() {
         </div>
       )}
 
+      {selectedIntersection?.linkedCsvFileName && (
+        <div style={{ padding: '12px 28px 0' }}>
+          <span className="status-pill">{selectedIntersection.linkedCsvFileName} vinculado</span>
+        </div>
+      )}
+
       <section className="workspace">
         {activeStudy.currentStep === 0 && (
           <div className="two-column">
             <section>
-              <h2>Seleccionar interseccion</h2>
+              <h2>Intersecciones de trabajo</h2>
               <IntersectionMap
-                intersections={intersections}
-                selectedIntersectionId={activeStudy.intersectionId}
+                intersections={customIntersections}
+                selectedIntersectionId={selectedIntersection?.id ?? null}
+                onCreate={addIntersection}
                 onSelect={startStudy}
               />
             </section>
+
             <aside className="panel">
-              <h3>{selectedIntersection.id}</h3>
-              <p>{selectedIntersection.name}</p>
-              <dl>
-                <dt>Municipio</dt>
-                <dd>{selectedIntersection.municipality}</dd>
-                <dt>Localidad</dt>
-                <dd>{selectedIntersection.locality}</dd>
-                <dt>Estado</dt>
-                <dd>{selectedIntersection.verificationStatus === 'verified' ? 'Verificada' : 'Por verificar'}</dd>
-                <dt>Coordenadas</dt>
-                <dd>
-                  {selectedIntersection.latitude}, {selectedIntersection.longitude}
-                </dd>
-              </dl>
-              <section className="linked-intersections">
-                <div className="linked-header">
-                  <h4>Intersecciones vinculadas</h4>
-                  <span>{relatedIntersectionIds.length} vinculadas</span>
-                </div>
-                <div className="linked-list">
-                  {linkedIntersectionOptions.map((intersection) => (
-                    <label className="linked-option" key={intersection.id}>
-                      <input
-                        aria-label={`${intersection.id} ${intersection.name}`}
-                        checked={relatedIntersectionIds.includes(intersection.id)}
-                        onChange={() => toggleRelatedIntersection(intersection.id)}
-                        type="checkbox"
-                      />
-                      <span>
-                        <strong>{intersection.id}</strong>
-                        {intersection.name}
-                      </span>
+              {!selectedIntersection ? (
+                <>
+                  <h3>Nueva interseccion</h3>
+                  <p>Crea un marcador en el mapa para comenzar.</p>
+                  <p>Haz clic sobre el mapa o usa el boton para colocar el primer punto. Las coordenadas se guardaran automaticamente.</p>
+                </>
+              ) : (
+                <>
+                  <h3>{selectedIntersection.id}</h3>
+                  <label>
+                    Clave de interseccion
+                    <input
+                      defaultValue={selectedIntersection.id}
+                      key={`id-${selectedIntersection.id}`}
+                      onBlur={(event) => renameIntersection(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Nombre
+                    <input
+                      value={selectedIntersection.name}
+                      onChange={(event) => updateIntersection({ name: event.target.value })}
+                    />
+                  </label>
+                  <label>
+                    Municipio
+                    <input
+                      value={selectedIntersection.municipality}
+                      onChange={(event) => updateIntersection({ municipality: event.target.value })}
+                    />
+                  </label>
+                  <label>
+                    Localidad
+                    <input
+                      value={selectedIntersection.locality}
+                      onChange={(event) => updateIntersection({ locality: event.target.value })}
+                    />
+                  </label>
+                  <div className="form-grid">
+                    <label>
+                      Latitud
+                      <input readOnly value={selectedIntersection.latitude.toFixed(7)} />
                     </label>
-                  ))}
-                </div>
-              </section>
-              <div className="import-panel">
-                <label>
-                  <span className="file-label">
-                    <Upload size={16} />
-                    Importar CSV TDPA
-                  </span>
-                  <input
-                    accept=".csv,text/csv"
-                    type="file"
-                    onChange={(event) => {
-                      void importRoadTrafficCsv(event.target.files);
-                    }}
-                  />
-                </label>
-                <small>
-                  Calcula hora de diseño, composición vehicular y flujo directo para el corredor detectado.
-                </small>
-              </div>
-              {roadTrafficImportError && (
-                <p className="warning">
-                  <AlertTriangle size={16} />
-                  {roadTrafficImportError}
-                </p>
+                    <label>
+                      Longitud
+                      <input readOnly value={selectedIntersection.longitude.toFixed(7)} />
+                    </label>
+                  </div>
+                  <label>
+                    Observaciones de la interseccion
+                    <input
+                      value={selectedIntersection.notes}
+                      onChange={(event) => updateIntersection({ notes: event.target.value })}
+                    />
+                  </label>
+
+                  <section className="linked-intersections">
+                    <div className="linked-header">
+                      <h4>Intersecciones vinculadas</h4>
+                      <span>{relatedIntersectionIds.length} vinculadas</span>
+                    </div>
+                    <div className="linked-list">
+                      {linkedIntersectionOptions.length === 0 && <small>Crea otro marcador para poder vincularlo.</small>}
+                      {linkedIntersectionOptions.map((intersection) => (
+                        <label className="linked-option" key={intersection.id}>
+                          <input
+                            aria-label={`${intersection.id} ${intersection.name}`}
+                            checked={relatedIntersectionIds.includes(intersection.id)}
+                            onChange={() => toggleRelatedIntersection(intersection.id)}
+                            type="checkbox"
+                          />
+                          <span>
+                            <strong>{intersection.id}</strong>
+                            {intersection.name}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </section>
+
+                  <div className="import-panel">
+                    <label>
+                      <span className="file-label">
+                        <Upload size={16} />
+                        Importar CSV TDPA
+                      </span>
+                      <input
+                        accept=".csv,text/csv"
+                        aria-label="Importar CSV TDPA"
+                        type="file"
+                        onChange={(event) => {
+                          void importRoadTrafficCsv(event.target.files);
+                        }}
+                      />
+                    </label>
+                    <small>El CSV se vincula unicamente a esta interseccion y alimenta su estudio de hora de diseño.</small>
+                  </div>
+                  {roadTrafficImportError && (
+                    <p className="warning">
+                      <AlertTriangle size={16} />
+                      {roadTrafficImportError}
+                    </p>
+                  )}
+                </>
               )}
             </aside>
           </div>
@@ -492,226 +617,101 @@ export function WizardApp() {
         {activeStudy.currentStep === 2 && (
           <section>
             <h2>Programacion semaforica</h2>
-            <div className="program-grid">
-              {activeStudy.configurationSnapshot.programs.map((program) => (
-                <article className="program-card" key={program.id}>
-                  <div className="form-grid compact">
-                    <label>
-                      Programa
-                      <input
-                        value={program.name}
-                        onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { name: event.target.value }))}
-                      />
-                    </label>
-                    <label>
-                      Inicio
-                      <input
-                        type="time"
-                        value={program.startTime}
-                        onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { startTime: event.target.value }))}
-                      />
-                    </label>
-                    <label>
-                      Termino
-                      <input
-                        type="time"
-                        value={program.endTime}
-                        onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { endTime: event.target.value }))}
-                      />
-                    </label>
-                    <label>
-                      Ciclo total
-                      <input
-                        min={1}
-                        type="number"
-                        value={program.cycleSeconds ?? ''}
-                        onChange={(event) =>
-                          setActiveStudy(updateProgram(activeStudy, program.id, { cycleSeconds: parseOptionalNumber(event.target.value) }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Verde
-                      <input
-                        min={0}
-                        type="number"
-                        value={program.greenSeconds ?? ''}
-                        onChange={(event) =>
-                          setActiveStudy(updateProgram(activeStudy, program.id, { greenSeconds: parseOptionalNumber(event.target.value) }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Ambar
-                      <input
-                        min={0}
-                        type="number"
-                        value={program.amberSeconds ?? ''}
-                        onChange={(event) =>
-                          setActiveStudy(updateProgram(activeStudy, program.id, { amberSeconds: parseOptionalNumber(event.target.value) }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Rojo
-                      <input
-                        min={0}
-                        type="number"
-                        value={program.redSeconds ?? ''}
-                        onChange={(event) =>
-                          setActiveStudy(updateProgram(activeStudy, program.id, { redSeconds: parseOptionalNumber(event.target.value) }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Numero de fases
-                      <input
-                        max={8}
-                        min={1}
-                        type="number"
-                        value={program.phases ?? 1}
-                        onChange={(event) => setActiveStudy(updateProgramPhaseCount(activeStudy, program.id, Number(event.target.value) || 1))}
-                      />
-                    </label>
-                  </div>
-                  <h3>Ciclos por fase</h3>
-                  <div className="phase-grid">
-                    {program.phaseTimings.map((phase) => (
-                      <article className="phase-card" key={phase.id}>
-                        <label>
-                          Nombre
+            {activeStudy.configurationSnapshot.programs.map((program) => (
+              <article className="panel" key={program.id}>
+                <div className="form-grid">
+                  <label>
+                    Programa
+                    <input value={program.name} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { name: event.target.value }))} />
+                  </label>
+                  <label>
+                    Hora inicio
+                    <input type="time" value={program.startTime} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { startTime: event.target.value }))} />
+                  </label>
+                  <label>
+                    Hora termino
+                    <input type="time" value={program.endTime} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { endTime: event.target.value }))} />
+                  </label>
+                  <label>
+                    Ciclo (s)
+                    <input type="number" value={program.cycleSeconds ?? ''} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { cycleSeconds: parseOptionalNumber(event.target.value) }))} />
+                  </label>
+                  <label>
+                    Verde (s)
+                    <input type="number" value={program.greenSeconds ?? ''} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { greenSeconds: parseOptionalNumber(event.target.value) }))} />
+                  </label>
+                  <label>
+                    Ambar (s)
+                    <input type="number" value={program.amberSeconds ?? ''} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { amberSeconds: parseOptionalNumber(event.target.value) }))} />
+                  </label>
+                  <label>
+                    Rojo (s)
+                    <input type="number" value={program.redSeconds ?? ''} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { redSeconds: parseOptionalNumber(event.target.value) }))} />
+                  </label>
+                  <label>
+                    Fases
+                    <input
+                      min={1}
+                      max={8}
+                      type="number"
+                      value={program.phases ?? 1}
+                      onChange={(event) => setActiveStudy(updateProgramPhaseCount(activeStudy, program.id, Number(event.target.value) || 1))}
+                    />
+                  </label>
+                </div>
+                <div className="access-grid">
+                  {program.phaseTimings.map((phase) => (
+                    <article className="access-card" key={phase.id}>
+                      <h3>{phase.name}</h3>
+                      {(['cycleSeconds', 'greenSeconds', 'amberSeconds', 'redSeconds'] as const).map((field) => (
+                        <label key={field}>
+                          {field === 'cycleSeconds' ? 'Ciclo' : field === 'greenSeconds' ? 'Verde' : field === 'amberSeconds' ? 'Ambar' : 'Rojo'} (s)
                           <input
-                            value={phase.name}
-                            onChange={(event) =>
-                              setActiveStudy(updateProgramPhase(activeStudy, program.id, phase.id, { name: event.target.value }))
-                            }
-                          />
-                        </label>
-                        <label>
-                          Ciclo
-                          <input
-                            min={1}
                             type="number"
-                            value={phase.cycleSeconds ?? ''}
+                            value={phase[field] ?? ''}
                             onChange={(event) =>
-                              setActiveStudy(
-                                updateProgramPhase(activeStudy, program.id, phase.id, {
-                                  cycleSeconds: parseOptionalNumber(event.target.value),
-                                }),
-                              )
+                              setActiveStudy(updateProgramPhase(activeStudy, program.id, phase.id, { [field]: parseOptionalNumber(event.target.value) }))
                             }
                           />
                         </label>
-                        <label>
-                          Verde
-                          <input
-                            min={0}
-                            type="number"
-                            value={phase.greenSeconds ?? ''}
-                            onChange={(event) =>
-                              setActiveStudy(
-                                updateProgramPhase(activeStudy, program.id, phase.id, {
-                                  greenSeconds: parseOptionalNumber(event.target.value),
-                                }),
-                              )
-                            }
-                          />
-                        </label>
-                        <label>
-                          Ambar
-                          <input
-                            min={0}
-                            type="number"
-                            value={phase.amberSeconds ?? ''}
-                            onChange={(event) =>
-                              setActiveStudy(
-                                updateProgramPhase(activeStudy, program.id, phase.id, {
-                                  amberSeconds: parseOptionalNumber(event.target.value),
-                                }),
-                              )
-                            }
-                          />
-                        </label>
-                        <label>
-                          Rojo
-                          <input
-                            min={0}
-                            type="number"
-                            value={phase.redSeconds ?? ''}
-                            onChange={(event) =>
-                              setActiveStudy(
-                                updateProgramPhase(activeStudy, program.id, phase.id, {
-                                  redSeconds: parseOptionalNumber(event.target.value),
-                                }),
-                              )
-                            }
-                          />
-                        </label>
-                      </article>
-                    ))}
-                  </div>
-                </article>
-              ))}
-            </div>
+                      ))}
+                    </article>
+                  ))}
+                </div>
+              </article>
+            ))}
           </section>
         )}
 
         {activeStudy.currentStep === 3 && (
           <section>
             <h2>Datos del estudio</h2>
-            <div className="form-grid">
+            <div className="panel form-grid">
               <label>
                 Fecha
-                <input
-                  type="date"
-                  value={activeStudy.metadata.date}
-                  onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'date', event.target.value))}
-                />
+                <input type="date" value={activeStudy.metadata.date} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'date', event.target.value))} />
               </label>
               <label>
                 Hora inicio
-                <input
-                  type="time"
-                  value={activeStudy.metadata.startTime}
-                  onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'startTime', event.target.value))}
-                />
+                <input type="time" value={activeStudy.metadata.startTime} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'startTime', event.target.value))} />
               </label>
               <label>
                 Hora termino
-                <input
-                  type="time"
-                  value={activeStudy.metadata.endTime}
-                  onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'endTime', event.target.value))}
-                />
+                <input type="time" value={activeStudy.metadata.endTime} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'endTime', event.target.value))} />
               </label>
               <label>
-                Intervalo
-                <select
-                  value={activeStudy.metadata.intervalMinutes}
-                  onChange={(event) =>
-                    setActiveStudy(updateStudyMetadata(activeStudy, 'intervalMinutes', Number(event.target.value)))
-                  }
-                >
-                  {[5, 10, 15, 20, 30].map((value) => (
-                    <option key={value} value={value}>
-                      {value} minutos
-                    </option>
-                  ))}
+                Intervalo (min)
+                <select value={activeStudy.metadata.intervalMinutes} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'intervalMinutes', Number(event.target.value)))}>
+                  {[5, 10, 15, 20, 30].map((minutes) => <option key={minutes} value={minutes}>{minutes}</option>)}
                 </select>
               </label>
               <label>
                 Aforador
-                <input
-                  value={activeStudy.metadata.surveyor}
-                  onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'surveyor', event.target.value))}
-                />
+                <input value={activeStudy.metadata.surveyor} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'surveyor', event.target.value))} />
               </label>
               <label>
                 Clima
-                <input
-                  value={activeStudy.metadata.weather}
-                  onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'weather', event.target.value))}
-                />
+                <input value={activeStudy.metadata.weather} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'weather', event.target.value))} />
               </label>
               <label>
                 Flujo de saturación observado (veh/h/carril)
@@ -719,19 +719,12 @@ export function WizardApp() {
                   min={0}
                   type="number"
                   value={activeStudy.metadata.observedSaturationFlowPerLane ?? ''}
-                  onChange={(event) =>
-                    setActiveStudy(
-                      updateStudyMetadata(activeStudy, 'observedSaturationFlowPerLane', parseOptionalNumber(event.target.value)),
-                    )
-                  }
+                  onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'observedSaturationFlowPerLane', parseOptionalNumber(event.target.value)))}
                 />
               </label>
               <label>
                 Observaciones generales
-                <input
-                  value={activeStudy.metadata.notes}
-                  onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'notes', event.target.value))}
-                />
+                <input value={activeStudy.metadata.notes} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'notes', event.target.value))} />
               </label>
             </div>
           </section>
@@ -753,7 +746,7 @@ export function WizardApp() {
                     <th>Total</th>
                     <th>Pesados</th>
                     <th>Motos</th>
-                    <th>Bicis</th>
+                    <th>Bicicletas</th>
                     <th>Peatones</th>
                     <th>Cola max</th>
                     <th>Cola prom</th>
@@ -766,61 +759,26 @@ export function WizardApp() {
                 </thead>
                 <tbody>
                   {activeStudy.rows.map((row) => {
-                    const access = activeStudy.configurationSnapshot.accesses.find((item) => item.id === row.accessId);
-                    const total = access ? calculateRowMotorizedTotal(row, access) : 0;
+                    const access = activeStudy.configurationSnapshot.accesses.find((candidate) => candidate.id === row.accessId) ?? activeStudy.configurationSnapshot.accesses[0];
                     return (
                       <tr key={row.id}>
                         <td>{row.intervalLabel}</td>
                         <td>{row.accessName}</td>
-                        {(['left', 'through', 'right', 'uTurn'] as const).map((field) => (
+                        {(['left', 'through', 'right', 'uTurn'] as MovementKey[]).map((field) => (
                           <td key={field}>
-                            {access?.movements[field] ? (
-                              <input
-                                inputMode="numeric"
-                                min={0}
-                                type="number"
-                                value={row[field] ?? ''}
-                                onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))}
-                              />
-                            ) : (
-                              <span className="na">N/A</span>
-                            )}
+                            {access.movements[field] ? (
+                              <input min={0} type="number" value={row[field] ?? ''} onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))} />
+                            ) : 'N/A'}
                           </td>
                         ))}
-                        <td className="computed">{total}</td>
-                        {([
-                          'heavy',
-                          'motorcycles',
-                          'bicycles',
-                          'pedestrians',
-                          'maxQueue',
-                          'averageQueue',
-                          'queueLength',
-                          'stoppedVehiclesPerCycle',
-                          'observedCycle',
-                        ] as const).map((field) => (
+                        <td>{calculateRowMotorizedTotal(row, access)}</td>
+                        {(['heavy', 'motorcycles', 'bicycles', 'pedestrians', 'maxQueue', 'averageQueue', 'queueLength', 'stoppedVehiclesPerCycle', 'observedCycle'] as Array<keyof CaptureRow>).map((field) => (
                           <td key={field}>
-                            <input
-                              inputMode="numeric"
-                              min={0}
-                              type="number"
-                              value={row[field] ?? ''}
-                              onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))}
-                            />
+                            <input min={0} type="number" value={String(row[field] ?? '')} onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))} />
                           </td>
                         ))}
-                        <td>
-                          <input
-                            value={row.observedProgram}
-                            onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'observedProgram', event.target.value))}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            value={row.notes}
-                            onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'notes', event.target.value))}
-                          />
-                        </td>
+                        <td><input value={row.observedProgram} onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'observedProgram', event.target.value))} /></td>
+                        <td><input value={row.notes} onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'notes', event.target.value))} /></td>
                       </tr>
                     );
                   })}
@@ -832,27 +790,17 @@ export function WizardApp() {
 
         {activeStudy.currentStep === 5 && (
           <section>
-            <h2>Validacion del estudio</h2>
-            <div className="validation-grid">
-              {summary.issues.length === 0 ? (
-                <article className="result ok">
-                  <CheckCircle2 size={20} />
-                  Sin errores obligatorios
-                </article>
-              ) : (
-                summary.issues.slice(0, 8).map((issue) => (
-                  <article className="result issue" key={issue}>
-                    <AlertTriangle size={20} />
-                    {issue}
-                  </article>
-                ))
-              )}
-              {summary.dataQuality.map((item) => (
-                <article className="result" key={item}>
-                  <CheckCircle2 size={20} />
-                  {item}
-                </article>
-              ))}
+            <h2>Validacion</h2>
+            {summary.issues.length === 0 ? (
+              <p className="result"><CheckCircle2 size={18} /> Sin errores obligatorios detectados.</p>
+            ) : (
+              <div className="panel">
+                <p className="warning"><AlertTriangle size={16} /> Se detectaron {summary.issues.length} observaciones.</p>
+                <ul>{summary.issues.slice(0, 30).map((issue) => <li key={issue}>{issue}</li>)}</ul>
+              </div>
+            )}
+            <div className="summary-grid">
+              {summary.dataQuality.map((item) => <div className="kpi" key={item}>{item}</div>)}
             </div>
           </section>
         )}
@@ -860,124 +808,52 @@ export function WizardApp() {
         {activeStudy.currentStep === 6 && (
           <section>
             <h2>Resultados</h2>
-            <div className="kpi-grid">
-              <article>
-                <span>Volumen total</span>
-                <strong>{summary.totalMotorized.toLocaleString('es-MX')}</strong>
-              </article>
-              <article>
-                <span>Hora pico</span>
-                <strong>{summary.peakHour?.label ?? 'N/D'}</strong>
-              </article>
-              <article>
-                <span>{summary.peakHour?.factorLabel ?? 'FHP'}</span>
-                <strong>{summary.peakHour?.factor?.toFixed(2) ?? 'N/D'}</strong>
-              </article>
-              <article>
-                <span>Peatones</span>
-                <strong>{summary.totalPedestrians.toLocaleString('es-MX')}</strong>
-              </article>
-              <article>
-                <span>Intervalo máximo</span>
-                <strong>
-                  {summary.peakInterval ? `${summary.peakInterval.label} · ${summary.peakInterval.volume}` : 'N/D'}
-                </strong>
-              </article>
-              <article>
-                <span>Promedio {activeStudy.metadata.intervalMinutes} min</span>
-                <strong>{summary.averageIntervalVolume.toFixed(1)}</strong>
-              </article>
-              <article>
-                <span>g/C</span>
-                <strong>{summary.signalIndicators.greenRatio?.toFixed(3) ?? 'N/D'}</strong>
-              </article>
-              <article>
-                <span>v/c</span>
-                <strong>{summary.signalIndicators.volumeCapacityRatio?.toFixed(3) ?? 'N/D'}</strong>
-              </article>
-            </div>
-            <div className="charts">
-              <article>
-                <h3>Volumen por intervalo</h3>
-                <ResponsiveContainer width="100%" height={260}>
-                  <LineChart data={intervalChart}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="interval" />
-                    <YAxis />
-                    <Tooltip />
-                    <Line type="monotone" dataKey="volume" stroke="#1f6feb" strokeWidth={3} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </article>
-              <article>
-                <h3>Volumen por acceso</h3>
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={summary.byAccess}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="accessName" />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="volume" fill="#16a34a" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </article>
-              <article>
-                <h3>Movimientos</h3>
-                <ResponsiveContainer width="100%" height={260}>
-                  <PieChart>
-                    <Pie data={summary.byMovement} dataKey="volume" nameKey="movement" outerRadius={90} label>
-                      {summary.byMovement.map((entry, index) => (
-                        <Cell key={entry.movement} fill={palette[index % palette.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </article>
-            </div>
             {roadTrafficImport && (
-              <section className="corridor-panel">
-                <div>
-                  <h3>Corredor estimado: {roadTrafficImport.corridorName}</h3>
-                  <p>
-                    Punto generador: {roadTrafficImport.point}. TDPA {roadTrafficImport.profile.dailyTraffic.toLocaleString('es-MX')};
-                    hora de diseño {roadTrafficImport.profile.designHourTotal.toLocaleString('es-MX')} veh/h.
-                  </p>
-                </div>
-                <div className="corridor-actions">
-                  {roadTrafficImport.studies.map((item) => (
-                    <button
-                      className={item.study.intersectionId === activeStudy.intersectionId ? 'secondary selected-action' : 'secondary'}
-                      key={item.intersection.id}
-                      onClick={() => setActiveStudy(item.study)}
-                      type="button"
-                    >
-                      {item.intersection.id}
-                    </button>
-                  ))}
-                </div>
-              </section>
+              <div className="panel">
+                <strong>{roadTrafficImport.point}</strong>
+                <p>CSV TDPA aplicado exclusivamente a {roadTrafficImport.corridorName}.</p>
+              </div>
             )}
+            <div className="summary-grid">
+              <article className="kpi"><span>Volumen total</span><strong>{numberFormat.format(summary.totalMotorized)}</strong></article>
+              <article className="kpi"><span>Intervalo máximo</span><strong>{summary.peakInterval ? `${summary.peakInterval.label} · ${numberFormat.format(summary.peakInterval.volume)}` : 'N/D'}</strong></article>
+              <article className="kpi"><span>Hora de máxima demanda</span><strong>{summary.peakHour ? `${summary.peakHour.label} · ${numberFormat.format(summary.peakHour.volume)}` : 'N/D'}</strong></article>
+              <article className="kpi"><span>{summary.peakHour?.factorLabel ?? 'FHP'}</span><strong>{summary.peakHour?.factor === null || summary.peakHour?.factor === undefined ? 'N/D' : summary.peakHour.factor.toFixed(3)}</strong></article>
+              <article className="kpi"><span>Promedio 15 min</span><strong>{formatNullable(summary.averageIntervalVolume, 1)}</strong></article>
+              <article className="kpi"><span>g/C</span><strong>{formatNullable(summary.signalIndicators.greenRatio, 3)}</strong></article>
+              <article className="kpi"><span>v/c</span><strong>{formatNullable(summary.signalIndicators.volumeCapacityRatio, 3)}</strong></article>
+              <article className="kpi"><span>Pesados</span><strong>{numberFormat.format(summary.totalHeavy)}</strong></article>
+              <article className="kpi"><span>Motos</span><strong>{numberFormat.format(summary.totalMotorcycles)}</strong></article>
+              <article className="kpi"><span>Bicicletas</span><strong>{numberFormat.format(summary.totalBicycles)}</strong></article>
+              <article className="kpi"><span>Peatones</span><strong>{numberFormat.format(summary.totalPedestrians)}</strong></article>
+            </div>
+
+            <div className="two-column">
+              <section className="panel">
+                <h3>Volumen por intervalo</h3>
+                <table>
+                  <thead><tr><th>Intervalo</th><th>Volumen</th></tr></thead>
+                  <tbody>{summary.byInterval.map((interval) => <tr key={interval.intervalId}><td>{interval.label}</td><td>{numberFormat.format(interval.total)}</td></tr>)}</tbody>
+                </table>
+              </section>
+              <section className="panel">
+                <h3>Volumen por acceso</h3>
+                <table>
+                  <thead><tr><th>Acceso</th><th>Volumen</th></tr></thead>
+                  <tbody>{summary.byAccess.map((access) => <tr key={access.accessId}><td>{access.accessName}</td><td>{numberFormat.format(access.volume)}</td></tr>)}</tbody>
+                </table>
+              </section>
+            </div>
           </section>
         )}
 
         {activeStudy.currentStep === 7 && (
-          <section className="export-panel">
-            <FileSpreadsheet size={48} />
-            <h2>Exportar Excel</h2>
-            <p>{activeStudy.id}.xlsx</p>
-            <button className="primary big" onClick={exportExcel} type="button">
-              <Download size={18} />
-              Generar XLSX
-            </button>
-            <button
-              className="secondary"
-              onClick={() => persist({ ...state, activeStudy: createDefaultStudy(activeStudy.intersectionId) })}
-              type="button"
-            >
-              <RefreshCw size={16} />
-              Finalizar y comenzar nuevo
+          <section className="panel">
+            <h2>Exportar estudio</h2>
+            <p>Genera el XLSX con ficha tecnica, dashboard, aforo detallado, programacion, colas, indicadores e instructivo.</p>
+            <button className="primary" disabled={!selectedIntersection} onClick={exportExcel} type="button">
+              <Download size={16} />
+              Exportar Excel
             </button>
           </section>
         )}
@@ -988,10 +864,8 @@ export function WizardApp() {
           <ArrowLeft size={16} />
           Anterior
         </button>
-        <span>
-          {selectedIntersection.id} · {activeStudy.metadata.date} · {activeStudy.metadata.startTime}-{activeStudy.metadata.endTime}
-        </span>
-        <button disabled={activeStudy.currentStep === wizardSteps.length - 1} onClick={() => goToStep(activeStudy.currentStep + 1)} type="button">
+        <span>{selectedIntersection ? `${selectedIntersection.id} · ${selectedIntersection.name}` : 'Sin interseccion seleccionada'}</span>
+        <button disabled={!selectedIntersection || activeStudy.currentStep === wizardSteps.length - 1} onClick={() => goToStep(activeStudy.currentStep + 1)} type="button">
           Siguiente
           <ArrowRight size={16} />
         </button>
