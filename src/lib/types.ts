@@ -256,6 +256,7 @@ export interface StudySummary {
   rowValidation?: RowValidationResult[];
   dataQuality: string[];
   issues: string[];
+  warnings?: string[];
 }
 
 export interface StoredState {
