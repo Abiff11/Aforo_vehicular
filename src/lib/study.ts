@@ -67,6 +67,7 @@ export function createDefaultStudy(intersectionId: string): Study {
       intervalMinutes: 15,
       surveyor: '',
       weather: '',
+      observedSaturationFlowPerLane: null,
       notes: '',
     },
     configurationSnapshot,
