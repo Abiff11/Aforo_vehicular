@@ -1,4 +1,12 @@
-import type { AccessConfig, IntersectionConfig, MovementKey, SignalPhaseTiming, SignalProgram, Study } from './types';
+import type {
+  AccessConfig,
+  IntersectionConfig,
+  MovementKey,
+  SignalPhaseTiming,
+  SignalProgram,
+  Study,
+  StudyMetadata,
+} from './types';
 import { createEmptyCaptureRows } from './calculations';
 import { generateIntervals } from './time';
 
@@ -51,25 +59,34 @@ export function createDefaultConfiguration(intersectionId: string, inherited = f
   };
 }
 
-export function createDefaultStudy(intersectionId: string): Study {
+export function createDefaultStudyMetadata(now = new Date().toISOString()): StudyMetadata {
+  return {
+    date: now.slice(0, 10),
+    startTime: '07:00',
+    endTime: '09:00',
+    intervalMinutes: 15,
+    surveyor: '',
+    weather: '',
+    observedSaturationFlowPerLane: null,
+    notes: '',
+  };
+}
+
+export function createDefaultStudy(intersectionId: string, metadata: StudyMetadata = createDefaultStudyMetadata()): Study {
   const configurationSnapshot = createDefaultConfiguration(intersectionId);
-  const intervals = generateIntervals('07:00', '09:00', 15);
+  const normalizedMetadata = { ...metadata };
+  const intervals = generateIntervals(
+    normalizedMetadata.startTime,
+    normalizedMetadata.endTime,
+    normalizedMetadata.intervalMinutes,
+  );
   const now = new Date().toISOString();
 
   return {
     id: `AF-${now.slice(0, 10).replaceAll('-', '')}-${intersectionId}`,
     intersectionId,
     currentStep: 0,
-    metadata: {
-      date: now.slice(0, 10),
-      startTime: '07:00',
-      endTime: '09:00',
-      intervalMinutes: 15,
-      surveyor: '',
-      weather: '',
-      observedSaturationFlowPerLane: null,
-      notes: '',
-    },
+    metadata: normalizedMetadata,
     configurationSnapshot,
     relatedIntersectionIds: [],
     intervals,
