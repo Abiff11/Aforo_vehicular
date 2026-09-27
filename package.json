@@ -1,0 +1,77 @@
+{
+  "name": "aforos-intersecciones",
+  "version": "1.0.0",
+  "description": "Aplicacion de escritorio para captura, analisis y exportacion de aforos en intersecciones semaforizadas.",
+  "author": "Aforos Intersecciones",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "electron:dev": "concurrently \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "test": "vitest run",
+    "lint": "eslint .",
+    "build": "tsc -b && vite build && npm run build:electron",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "package": "npm run build && electron-builder --win portable --x64",
+    "dist:zip": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-deliverable.ps1"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.0.3",
+    "electron-is-dev": "^3.0.1",
+    "lucide-react": "^0.544.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "recharts": "^3.2.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@testing-library/jest-dom": "^6.8.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^24.5.2",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "@typescript-eslint/parser": "^8.44.1",
+    "@vitejs/plugin-react-swc": "^4.0.1",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.0.0",
+    "electron": "^38.1.2",
+    "electron-builder": "^26.0.12",
+    "eslint": "^9.36.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^16.4.0",
+    "jsdom": "^27.0.0",
+    "typescript": "~5.9.2",
+    "vite": "^7.1.7",
+    "vitest": "^3.2.4",
+    "wait-on": "^8.0.4"
+  },
+  "build": {
+    "appId": "mx.aforos.intersecciones",
+    "productName": "Aforos Intersecciones",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "Aforos-Intersecciones-${version}-portable.exe"
+    }
+  }
+}
