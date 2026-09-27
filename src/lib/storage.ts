@@ -35,15 +35,9 @@ export function loadStoredState(): VersionedStoredState {
       return { schemaVersion: 1, ...createInitialState() };
     }
 
-    const customIntersections = parsed.customIntersections ?? [];
-    const activeStudy = customIntersections.some((intersection) => intersection.id === parsed.activeStudy?.intersectionId)
-      ? parsed.activeStudy
-      : null;
-
     return {
       ...parsed,
-      customIntersections,
-      activeStudy,
+      customIntersections: parsed.customIntersections ?? [],
     };
   } catch {
     return { schemaVersion: 1, ...createInitialState() };
