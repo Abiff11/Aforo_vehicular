@@ -4,10 +4,11 @@ import type {
   IntervalBlock,
   MovementKey,
   RowValidationResult,
+  SignalMovementAssignment,
   SignalProgram,
   StudySummary,
 } from './types';
-import { intervalsAreConsecutive, isOneHourCompatible } from './time';
+import { intervalsAreConsecutive, isOneHourCompatible, minutesFromClock } from './time';
 
 const movementLabels: Record<MovementKey, string> = {
   left: 'Izquierda',
@@ -17,10 +18,17 @@ const movementLabels: Record<MovementKey, string> = {
 };
 
 const movementKeys: MovementKey[] = ['left', 'through', 'right', 'uTurn'];
+const MINUTES_PER_DAY = 24 * 60;
 
 interface SignalCalculationInput {
   programs?: SignalProgram[];
+  assignments?: SignalMovementAssignment[];
   observedSaturationFlowPerLane?: number | null;
+}
+
+interface ProgramResolution {
+  program: SignalProgram | null;
+  crossesProgramChange: boolean;
 }
 
 function valueOrZero(value: number | null | undefined): number {
@@ -33,9 +41,7 @@ function isMissing(value: number | null | undefined): value is null | undefined 
 
 function averageCaptured(values: Array<number | null | undefined>): number | null {
   const captured = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
-  if (captured.length === 0) {
-    return null;
-  }
+  if (captured.length === 0) return null;
   return captured.reduce((total, value) => total + value, 0) / captured.length;
 }
 
@@ -44,8 +50,59 @@ function maxCaptured(values: Array<number | null | undefined>): number | null {
   return captured.length === 0 ? null : Math.max(...captured);
 }
 
+function minCaptured(values: Array<number | null | undefined>): number | null {
+  const captured = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  return captured.length === 0 ? null : Math.min(...captured);
+}
+
 function combineNotes(rows: CaptureRow[]): string {
   return Array.from(new Set(rows.map((row) => row.notes.trim()).filter(Boolean))).join(' | ');
+}
+
+function durationMinutes(start: string, end: string): number {
+  const startMinute = minutesFromClock(start);
+  const endMinute = minutesFromClock(end);
+  const duration = (endMinute - startMinute + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+  return duration === 0 ? MINUTES_PER_DAY : duration;
+}
+
+function clockOffset(referenceStart: string, value: string): number {
+  return (minutesFromClock(value) - minutesFromClock(referenceStart) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+}
+
+function programContainsInterval(program: SignalProgram, start: string, end: string): boolean {
+  const programDuration = durationMinutes(program.startTime, program.endTime);
+  const intervalDuration = durationMinutes(start, end);
+  const intervalOffset = clockOffset(program.startTime, start);
+  return intervalOffset < programDuration && intervalOffset + intervalDuration <= programDuration;
+}
+
+function programAtMinute(programs: SignalProgram[], minute: number): SignalProgram | null {
+  return programs.find((program) => {
+    const start = minutesFromClock(program.startTime);
+    const duration = durationMinutes(program.startTime, program.endTime);
+    const offset = (minute - start + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+    return offset < duration;
+  }) ?? null;
+}
+
+export function resolveProgramForInterval(
+  programs: SignalProgram[],
+  intervalStart: string,
+  intervalEnd: string,
+): ProgramResolution {
+  const contained = programs.find((program) => programContainsInterval(program, intervalStart, intervalEnd));
+  if (contained) return { program: contained, crossesProgramChange: false };
+
+  const startMinute = minutesFromClock(intervalStart);
+  const intervalDuration = durationMinutes(intervalStart, intervalEnd);
+  const lastMinute = (startMinute + Math.max(0, intervalDuration - 1)) % MINUTES_PER_DAY;
+  const startProgram = programAtMinute(programs, startMinute);
+  const endProgram = programAtMinute(programs, lastMinute);
+  return {
+    program: null,
+    crossesProgramChange: Boolean(startProgram && endProgram && startProgram.id !== endProgram.id),
+  };
 }
 
 export function calculateRowMotorizedTotal(row: CaptureRow, access: AccessConfig): number {
@@ -145,6 +202,8 @@ export function calculateStudySummary(
   intervalMinutes: number,
   signalInput: SignalCalculationInput = {},
 ): StudySummary {
+  const programs = signalInput.programs ?? [];
+  const assignments = signalInput.assignments ?? [];
   const accessById = new Map(accesses.map((access) => [access.id, access]));
   const fallbackAccess = accesses[0];
   const rowValidation = rows.map((row) => {
@@ -217,12 +276,18 @@ export function calculateStudySummary(
         intervalIds: window.map((item) => item.intervalId),
         tie: false,
       };
-      if (!peakHour || candidate.volume > peakHour.volume) {
-        peakHour = candidate;
-      } else if (candidate.volume === peakHour.volume) {
-        peakHour = { ...peakHour, tie: true };
-      }
+      if (!peakHour || candidate.volume > peakHour.volume) peakHour = candidate;
+      else if (candidate.volume === peakHour.volume) peakHour = { ...peakHour, tie: true };
     }
+  }
+
+  const warnings: string[] = [];
+  if (peakHour?.tie) warnings.push('Existe empate entre ventanas de hora pico; se conserva la primera.');
+  const intervalProgramResolution = new Map<string, ProgramResolution>();
+  for (const item of byInterval) {
+    const resolution = resolveProgramForInterval(programs, item.start, item.end);
+    intervalProgramResolution.set(item.intervalId, resolution);
+    if (resolution.crossesProgramChange) warnings.push(`Cambio de programa dentro del intervalo ${item.label}.`);
   }
 
   const byAccess = accesses.map((access) => ({
@@ -249,30 +314,103 @@ export function calculateStudySummary(
     };
   });
 
-  const program = signalInput.programs?.find(
-    (item) => typeof item.cycleSeconds === 'number' && item.cycleSeconds > 0 && typeof item.greenSeconds === 'number',
-  );
-  const fallbackProgram = signalInput.programs?.[0];
-  const signalProgram = program ?? fallbackProgram;
-  const cycleSeconds = signalProgram?.cycleSeconds && signalProgram.cycleSeconds > 0 ? signalProgram.cycleSeconds : null;
-  const phaseGreen = signalProgram?.phaseTimings.find((phase) => typeof phase.greenSeconds === 'number' && phase.greenSeconds >= 0)?.greenSeconds;
-  const effectiveGreenSeconds =
-    typeof signalProgram?.greenSeconds === 'number' && signalProgram.greenSeconds >= 0
-      ? signalProgram.greenSeconds
-      : typeof phaseGreen === 'number'
-        ? phaseGreen
+  const cycleSummaries = accesses.map((access) => {
+    const observedRows = rows.filter(
+      (row) => row.accessId === access.id && typeof row.observedCycle === 'number' && Number.isFinite(row.observedCycle),
+    );
+    const observedCycles = observedRows.map((row) => row.observedCycle);
+    const programmedCycles: number[] = [];
+    const differences: number[] = [];
+    for (const row of observedRows) {
+      const resolution = intervalProgramResolution.get(row.intervalId);
+      const programmedCycle = resolution?.program?.cycleSeconds;
+      if (typeof programmedCycle === 'number' && programmedCycle > 0 && typeof row.observedCycle === 'number') {
+        programmedCycles.push(programmedCycle);
+        differences.push(row.observedCycle - programmedCycle);
+      }
+    }
+    return {
+      accessId: access.id,
+      accessName: access.name,
+      averageObservedCycle: averageCaptured(observedCycles),
+      minObservedCycle: minCaptured(observedCycles),
+      maxObservedCycle: maxCaptured(observedCycles),
+      programmedCycleSeconds: averageCaptured(programmedCycles),
+      averageDifferenceSeconds: averageCaptured(differences),
+    };
+  });
+
+  const peakIntervalIds = new Set(peakHour?.intervalIds ?? []);
+  const signalGroupIndicators = assignments.map((assignment) => {
+    const access = accessById.get(assignment.accessId);
+    const program = programs.find((item) => item.id === assignment.programId);
+    const phase = program?.phaseTimings.find((item) => item.id === assignment.phaseId);
+    const cycleSeconds =
+      typeof phase?.cycleSeconds === 'number' && phase.cycleSeconds > 0
+        ? phase.cycleSeconds
+        : typeof program?.cycleSeconds === 'number' && program.cycleSeconds > 0
+          ? program.cycleSeconds
+          : null;
+    const effectiveGreenSeconds =
+      typeof assignment.effectiveGreenSeconds === 'number' && assignment.effectiveGreenSeconds >= 0
+        ? assignment.effectiveGreenSeconds
         : null;
-  const greenRatio = cycleSeconds && effectiveGreenSeconds !== null ? effectiveGreenSeconds / cycleSeconds : null;
-  const saturationFlowPerLane =
-    typeof signalInput.observedSaturationFlowPerLane === 'number' && signalInput.observedSaturationFlowPerLane > 0
-      ? signalInput.observedSaturationFlowPerLane
+    const lanes = typeof assignment.lanes === 'number' && assignment.lanes > 0 ? assignment.lanes : null;
+    const saturationFlowPerLane =
+      typeof assignment.saturationFlowPerLane === 'number' && assignment.saturationFlowPerLane > 0
+        ? assignment.saturationFlowPerLane
+        : null;
+    const peakRows = rows.filter((row) => row.accessId === assignment.accessId && peakIntervalIds.has(row.intervalId));
+    const hasCompleteMovementVolume =
+      peakHour !== null &&
+      access?.movements[assignment.movement] === true &&
+      peakRows.length === peakIntervalIds.size &&
+      peakRows.every((row) => typeof row[assignment.movement] === 'number' && Number.isFinite(row[assignment.movement]));
+    const peakHourVolume = hasCompleteMovementVolume
+      ? peakRows.reduce((total, row) => total + valueOrZero(row[assignment.movement]), 0)
       : null;
-  const totalLanes = accesses.reduce((total, access) => total + Math.max(0, access.lanes), 0);
-  const capacity = saturationFlowPerLane !== null && greenRatio !== null && totalLanes > 0
-    ? saturationFlowPerLane * totalLanes * greenRatio
-    : null;
+    const peakProgramsValid =
+      peakHour !== null &&
+      Array.from(peakIntervalIds).every((intervalId) => {
+        const resolution = intervalProgramResolution.get(intervalId);
+        return !resolution?.crossesProgramChange && resolution?.program?.id === assignment.programId;
+      });
+    const formalInputsValid =
+      Boolean(access && phase && peakProgramsValid) &&
+      cycleSeconds !== null &&
+      effectiveGreenSeconds !== null &&
+      effectiveGreenSeconds <= cycleSeconds &&
+      lanes !== null &&
+      saturationFlowPerLane !== null;
+    const greenRatio = formalInputsValid && cycleSeconds ? effectiveGreenSeconds / cycleSeconds : null;
+    const capacity =
+      formalInputsValid && greenRatio !== null && saturationFlowPerLane !== null && lanes !== null
+        ? saturationFlowPerLane * lanes * greenRatio
+        : null;
+    const volumeCapacityRatio =
+      peakHourVolume !== null && capacity !== null && capacity > 0 ? peakHourVolume / capacity : null;
+
+    return {
+      assignmentId: assignment.id,
+      accessId: assignment.accessId,
+      accessName: access?.name ?? assignment.accessId,
+      movement: assignment.movement,
+      movementLabel: movementLabels[assignment.movement],
+      programId: assignment.programId,
+      phaseId: assignment.phaseId,
+      peakHourVolume,
+      saturationFlowPerLane,
+      lanes,
+      cycleSeconds,
+      effectiveGreenSeconds,
+      greenRatio,
+      capacity,
+      volumeCapacityRatio,
+    };
+  });
+
   const peakHourFlow = peakHour?.volume ?? null;
-  const volumeCapacityRatio = peakHourFlow !== null && capacity !== null && capacity > 0 ? peakHourFlow / capacity : null;
+  const validFormalGroups = signalGroupIndicators.filter((item) => item.capacity !== null && item.volumeCapacityRatio !== null).length;
 
   return {
     totalMotorized,
@@ -287,7 +425,17 @@ export function calculateStudySummary(
     byAccess,
     byMovement,
     queueByAccess,
-    signalIndicators: { peakHourFlow, cycleSeconds, effectiveGreenSeconds, greenRatio, saturationFlowPerLane, capacity, volumeCapacityRatio },
+    cycleSummaries,
+    signalGroupIndicators,
+    signalIndicators: {
+      peakHourFlow,
+      cycleSeconds: null,
+      effectiveGreenSeconds: null,
+      greenRatio: null,
+      saturationFlowPerLane: null,
+      capacity: null,
+      volumeCapacityRatio: null,
+    },
     completeRows,
     incompleteRows,
     errorRows,
@@ -301,10 +449,11 @@ export function calculateStudySummary(
       `${errorRows} filas con error`,
       `${accesses.length} accesos configurados`,
       issues.length === 0 ? 'Sin errores obligatorios' : `${issues.length} observaciones por revisar`,
-      capacity !== null && volumeCapacityRatio !== null
-        ? 'Capacidad y v/c calculados con saturación observada, carriles y proporción de verde.'
-        : 'Capacidad y v/c: N/D por falta de saturación, carriles o tiempos semafóricos.',
+      assignments.length === 0
+        ? 'Capacidad y v/c: N/D; no hay grupos movimiento-fase configurados.'
+        : `${validFormalGroups}/${assignments.length} grupos con capacidad y v/c formal calculables.`,
     ],
     issues,
+    warnings: Array.from(new Set(warnings)),
   };
 }
