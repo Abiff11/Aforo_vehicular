@@ -7,11 +7,18 @@ export interface WizardStep {
 
 export const wizardSteps: WizardStep[] = [
   {
-    label: 'Interseccion',
-    helpTitle: 'Elegir el cruce correcto',
+    label: 'Estudio',
+    helpTitle: 'Definir los datos comunes del estudio',
     helpBody:
-      'Selecciona la interseccion donde se realizara el aforo. Revisa el nombre del cruce, la clave INT y las coordenadas antes de avanzar. Si el nombre no coincide exactamente con campo, conserva la clave y usa observaciones del estudio para aclararlo.',
-    helpChecklist: ['Busca por clave INT o por nombre del cruce.', 'Confirma municipio, estado y coordenadas.', 'Avanza solo cuando el cruce seleccionado sea el correcto.'],
+      'Captura primero la fecha, horario, intervalo, aforador, clima y observaciones generales. Estos datos se conservan como memoria comun y se reutilizan automaticamente al trabajar con distintas intersecciones del mismo estudio.',
+    helpChecklist: ['Usa una hora de termino posterior a la inicial.', 'Elige intervalos de 5, 10, 15, 20 o 30 minutos.', 'Completa los datos comunes antes de crear o seleccionar intersecciones.'],
+  },
+  {
+    label: 'Interseccion',
+    helpTitle: 'Crear o elegir el cruce de trabajo',
+    helpBody:
+      'Crea un marcador sobre el mapa o selecciona una interseccion ya creada. Revisa la clave, nombre, municipio, localidad y coordenadas; el CSV TDPA y las relaciones quedan vinculados solo a ese marcador.',
+    helpChecklist: ['Crea o selecciona un marcador.', 'Confirma nombre, municipio, localidad y coordenadas.', 'Vincula el CSV o cruces relacionados cuando aplique.'],
   },
   {
     label: 'Configuracion',
@@ -26,13 +33,6 @@ export const wizardSteps: WizardStep[] = [
     helpBody:
       'Captura o revisa el programa semaforico que aplica al periodo del aforo. Aqui puedes editar ciclo total, verde, ambar, rojo, numero de fases y los tiempos particulares de cada fase.',
     helpChecklist: ['Verifica horario de inicio y termino del programa.', 'Registra ciclo total, verde, ambar y rojo.', 'Configura los segundos de ciclo, verde, ambar y rojo de cada fase.'],
-  },
-  {
-    label: 'Estudio',
-    helpTitle: 'Completar datos generales',
-    helpBody:
-      'Define la fecha, hora de inicio, hora de termino, duracion de intervalo, aforador y clima. Estos datos generan automaticamente los renglones de captura y aparecen despues en el dashboard y en el Excel final.',
-    helpChecklist: ['Usa una hora de termino posterior a la inicial.', 'Elige intervalos de 5, 10, 15, 20 o 30 minutos.', 'Completa aforador y clima para la ficha tecnica.'],
   },
   {
     label: 'Aforo',
@@ -52,14 +52,14 @@ export const wizardSteps: WizardStep[] = [
     label: 'Resultados',
     helpTitle: 'Interpretar el dashboard',
     helpBody:
-      'Consulta el resumen ejecutivo del estudio: volumen total, hora de maxima demanda, FHP o factor de uniformidad, volumen por acceso y distribucion de movimientos. Estos datos salen de la misma fuente que el Excel.',
-    helpChecklist: ['Revisa KPIs principales.', 'Compara volumen por intervalo y por acceso.', 'Confirma que la hora pico tenga sentido con lo capturado.'],
+      'Consulta el resumen ejecutivo con la misma fuente de datos que el Excel: KPIs, volumen por intervalo y acceso, distribucion por movimientos, colas y operacion e indicadores semaforicos.',
+    helpChecklist: ['Revisa KPIs principales.', 'Compara las graficas y tablas consolidadas.', 'Confirma que hora pico, colas e indicadores tengan sentido con lo capturado.'],
   },
   {
     label: 'Exportar',
     helpTitle: 'Generar el archivo Excel',
     helpBody:
       'Cuando la informacion este revisada, genera el archivo XLSX. El Excel contiene ficha tecnica, dashboard, aforo detallado, programacion, colas, indicadores e instructivo para entregar el estudio.',
-    helpChecklist: ['Genera el XLSX al finalizar la revision.', 'Abre el archivo para comprobar que se creo correctamente.', 'Solo inicia un nuevo estudio cuando ya no necesites modificar el actual.'],
+    helpChecklist: ['Genera el XLSX al finalizar la revision.', 'Abre el archivo para comprobar que se creo correctamente.', 'Solo limpia el estudio completo cuando ya no necesites ninguna interseccion capturada.'],
   },
 ];
