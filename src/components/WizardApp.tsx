@@ -71,6 +71,7 @@ function updateStudyRow(study: Study, rowId: string, field: keyof CaptureRow, ra
     'maxQueue',
     'averageQueue',
     'queueLength',
+    'stoppedVehiclesPerCycle',
     'observedCycle',
   ];
   const value = numericFields.includes(field) ? (rawValue === '' ? null : Number(rawValue)) : rawValue;
@@ -82,7 +83,11 @@ function updateStudyRow(study: Study, rowId: string, field: keyof CaptureRow, ra
   };
 }
 
-function updateStudyMetadata(study: Study, field: keyof Study['metadata'], value: string | number): Study {
+function updateStudyMetadata(
+  study: Study,
+  field: keyof Study['metadata'],
+  value: string | number | null,
+): Study {
   const next: Study = {
     ...study,
     metadata: {
@@ -116,20 +121,17 @@ export function WizardApp() {
         activeStudy.rows,
         activeStudy.configurationSnapshot.accesses,
         activeStudy.metadata.intervalMinutes,
+        {
+          programs: activeStudy.configurationSnapshot.programs,
+          observedSaturationFlowPerLane: activeStudy.metadata.observedSaturationFlowPerLane,
+        },
       ),
     [activeStudy],
   );
-  const intervalChart = useMemo(() => {
-    const byInterval = new Map<string, { interval: string; volume: number }>();
-    for (const row of activeStudy.rows) {
-      const access = activeStudy.configurationSnapshot.accesses.find((item) => item.id === row.accessId);
-      if (!access) continue;
-      const current = byInterval.get(row.intervalId) ?? { interval: row.intervalLabel, volume: 0 };
-      current.volume += calculateRowMotorizedTotal(row, access);
-      byInterval.set(row.intervalId, current);
-    }
-    return Array.from(byInterval.values());
-  }, [activeStudy]);
+  const intervalChart = useMemo(
+    () => summary.byInterval.map((interval) => ({ interval: interval.label, volume: interval.total })),
+    [summary.byInterval],
+  );
 
   function persist(nextState: StoredState): void {
     setState(nextState);
@@ -568,6 +570,26 @@ export function WizardApp() {
                   onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'weather', event.target.value))}
                 />
               </label>
+              <label>
+                Flujo de saturación observado (veh/h/carril)
+                <input
+                  min={0}
+                  type="number"
+                  value={activeStudy.metadata.observedSaturationFlowPerLane ?? ''}
+                  onChange={(event) =>
+                    setActiveStudy(
+                      updateStudyMetadata(activeStudy, 'observedSaturationFlowPerLane', parseOptionalNumber(event.target.value)),
+                    )
+                  }
+                />
+              </label>
+              <label>
+                Observaciones generales
+                <input
+                  value={activeStudy.metadata.notes}
+                  onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'notes', event.target.value))}
+                />
+              </label>
             </div>
           </section>
         )}
@@ -591,6 +613,12 @@ export function WizardApp() {
                     <th>Bicis</th>
                     <th>Peatones</th>
                     <th>Cola max</th>
+                    <th>Cola prom</th>
+                    <th>Longitud cola (m)</th>
+                    <th>Det./ciclo</th>
+                    <th>Ciclo obs.</th>
+                    <th>Programa</th>
+                    <th>Observaciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -606,6 +634,8 @@ export function WizardApp() {
                             {access?.movements[field] ? (
                               <input
                                 inputMode="numeric"
+                                min={0}
+                                type="number"
                                 value={row[field] ?? ''}
                                 onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))}
                               />
@@ -615,15 +645,39 @@ export function WizardApp() {
                           </td>
                         ))}
                         <td className="computed">{total}</td>
-                        {(['heavy', 'motorcycles', 'bicycles', 'pedestrians', 'maxQueue'] as const).map((field) => (
+                        {([
+                          'heavy',
+                          'motorcycles',
+                          'bicycles',
+                          'pedestrians',
+                          'maxQueue',
+                          'averageQueue',
+                          'queueLength',
+                          'stoppedVehiclesPerCycle',
+                          'observedCycle',
+                        ] as const).map((field) => (
                           <td key={field}>
                             <input
                               inputMode="numeric"
+                              min={0}
+                              type="number"
                               value={row[field] ?? ''}
                               onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))}
                             />
                           </td>
                         ))}
+                        <td>
+                          <input
+                            value={row.observedProgram}
+                            onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'observedProgram', event.target.value))}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={row.notes}
+                            onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'notes', event.target.value))}
+                          />
+                        </td>
                       </tr>
                     );
                   })}
@@ -679,6 +733,24 @@ export function WizardApp() {
               <article>
                 <span>Peatones</span>
                 <strong>{summary.totalPedestrians.toLocaleString('es-MX')}</strong>
+              </article>
+              <article>
+                <span>Intervalo máximo</span>
+                <strong>
+                  {summary.peakInterval ? `${summary.peakInterval.label} · ${summary.peakInterval.volume}` : 'N/D'}
+                </strong>
+              </article>
+              <article>
+                <span>Promedio {activeStudy.metadata.intervalMinutes} min</span>
+                <strong>{summary.averageIntervalVolume.toFixed(1)}</strong>
+              </article>
+              <article>
+                <span>g/C</span>
+                <strong>{summary.signalIndicators.greenRatio?.toFixed(3) ?? 'N/D'}</strong>
+              </article>
+              <article>
+                <span>v/c</span>
+                <strong>{summary.signalIndicators.volumeCapacityRatio?.toFixed(3) ?? 'N/D'}</strong>
               </article>
             </div>
             <div className="charts">
