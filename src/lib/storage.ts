@@ -5,6 +5,7 @@ export const STORAGE_KEY = 'aforos.state.v1';
 export function createInitialState(): StoredState {
   return {
     catalogVersion: '2026-09-25',
+    customIntersections: [],
     intersectionConfigs: {},
     lastConfiguration: null,
     activeStudy: null,
@@ -16,6 +17,7 @@ export function saveStoredState(state: StoredState): void {
   const payload: VersionedStoredState = {
     schemaVersion: 1,
     ...state,
+    customIntersections: state.customIntersections ?? [],
   };
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -33,7 +35,16 @@ export function loadStoredState(): VersionedStoredState {
       return { schemaVersion: 1, ...createInitialState() };
     }
 
-    return parsed;
+    const customIntersections = parsed.customIntersections ?? [];
+    const activeStudy = customIntersections.some((intersection) => intersection.id === parsed.activeStudy?.intersectionId)
+      ? parsed.activeStudy
+      : null;
+
+    return {
+      ...parsed,
+      customIntersections,
+      activeStudy,
+    };
   } catch {
     return { schemaVersion: 1, ...createInitialState() };
   }
