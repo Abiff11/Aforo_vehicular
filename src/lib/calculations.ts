@@ -7,7 +7,7 @@ import type {
   SignalProgram,
   StudySummary,
 } from './types';
-import { isOneHourCompatible } from './time';
+import { intervalsAreConsecutive, isOneHourCompatible } from './time';
 
 const movementLabels: Record<MovementKey, string> = {
   left: 'Izquierda',
@@ -36,7 +36,6 @@ function averageCaptured(values: Array<number | null | undefined>): number | nul
   if (captured.length === 0) {
     return null;
   }
-
   return captured.reduce((total, value) => total + value, 0) / captured.length;
 }
 
@@ -51,10 +50,7 @@ function combineNotes(rows: CaptureRow[]): string {
 
 export function calculateRowMotorizedTotal(row: CaptureRow, access: AccessConfig): number {
   return movementKeys.reduce((total, key) => {
-    if (!access.movements[key]) {
-      return total;
-    }
-
+    if (!access.movements[key]) return total;
     return total + valueOrZero(row[key]);
   }, 0);
 }
@@ -65,18 +61,13 @@ export function validateCaptureRowDetailed(row: CaptureRow, access: AccessConfig
 
   for (const key of movementKeys) {
     if (!access.movements[key]) {
-      if (row[key] !== null) {
-        errorIssues.push(`${movementLabels[key]} debe permanecer como N/A.`);
-      }
+      if (row[key] !== null) errorIssues.push(`${movementLabels[key]} debe permanecer como N/A.`);
       continue;
     }
 
     const value = row[key];
-    if (isMissing(value)) {
-      incompleteIssues.push(`Falta ${movementLabels[key].toLowerCase()}.`);
-    } else if (!Number.isInteger(value) || value < 0) {
-      errorIssues.push(`${movementLabels[key]} debe ser entero mayor o igual a cero.`);
-    }
+    if (isMissing(value)) incompleteIssues.push(`Falta ${movementLabels[key].toLowerCase()}.`);
+    else if (!Number.isInteger(value) || value < 0) errorIssues.push(`${movementLabels[key]} debe ser entero mayor o igual a cero.`);
   }
 
   for (const [label, value] of [
@@ -85,11 +76,8 @@ export function validateCaptureRowDetailed(row: CaptureRow, access: AccessConfig
     ['Bicicletas', row.bicycles],
     ['Peatones', row.pedestrians],
   ] as const) {
-    if (isMissing(value)) {
-      incompleteIssues.push(`Falta ${label.toLowerCase()}.`);
-    } else if (!Number.isInteger(value) || value < 0) {
-      errorIssues.push(`${label} debe ser entero mayor o igual a cero.`);
-    }
+    if (isMissing(value)) incompleteIssues.push(`Falta ${label.toLowerCase()}.`);
+    else if (!Number.isInteger(value) || value < 0) errorIssues.push(`${label} debe ser entero mayor o igual a cero.`);
   }
 
   if (
@@ -107,9 +95,7 @@ export function validateCaptureRowDetailed(row: CaptureRow, access: AccessConfig
     ['Vehículos detenidos por ciclo', row.stoppedVehiclesPerCycle],
     ['Ciclo observado', row.observedCycle],
   ] as const) {
-    if (!isMissing(value) && (!Number.isFinite(value) || value < 0)) {
-      errorIssues.push(`${label} debe ser mayor o igual a cero.`);
-    }
+    if (!isMissing(value) && (!Number.isFinite(value) || value < 0)) errorIssues.push(`${label} debe ser mayor o igual a cero.`);
   }
 
   const issues = [...errorIssues, ...incompleteIssues];
@@ -163,9 +149,7 @@ export function calculateStudySummary(
   const fallbackAccess = accesses[0];
   const rowValidation = rows.map((row) => {
     const access = accessById.get(row.accessId) ?? fallbackAccess;
-    if (!access) {
-      return { rowId: row.id, state: 'error' as const, issues: ['Acceso no configurado.'] };
-    }
+    if (!access) return { rowId: row.id, state: 'error' as const, issues: ['Acceso no configurado.'] };
     return validateCaptureRowDetailed(row, access);
   });
   const issues = rowValidation.flatMap((result) => result.issues);
@@ -211,17 +195,17 @@ export function calculateStudySummary(
   const totalMotorized = rows.reduce((total, row) => total + totalForRow(row), 0);
   const validIntervals = byInterval.filter((item) => item.complete);
   const peakInterval = validIntervals.reduce<{ label: string; volume: number } | null>((best, item) => {
-    if (!best || item.total > best.volume) {
-      return { label: item.label, volume: item.total };
-    }
+    if (!best || item.total > best.volume) return { label: item.label, volume: item.total };
     return best;
   }, null);
 
   const slotsPerHour = isOneHourCompatible(intervalMinutes) ? 60 / intervalMinutes : 0;
-  let peakHour = null;
+  let peakHour: StudySummary['peakHour'] = null;
   if (slotsPerHour > 0 && byInterval.length >= slotsPerHour) {
     for (let index = 0; index <= byInterval.length - slotsPerHour; index += 1) {
       const window = byInterval.slice(index, index + slotsPerHour);
+      if (!window.every((item) => item.complete) || !intervalsAreConsecutive(window)) continue;
+
       const volume = window.reduce((total, item) => total + item.total, 0);
       const maxIntervalVolume = Math.max(...window.map((item) => item.total));
       const candidate = {
@@ -230,9 +214,13 @@ export function calculateStudySummary(
         maxIntervalVolume,
         factor: maxIntervalVolume > 0 ? volume / (slotsPerHour * maxIntervalVolume) : null,
         factorLabel: intervalMinutes === 15 ? ('FHP' as const) : ('Factor de uniformidad de hora pico' as const),
+        intervalIds: window.map((item) => item.intervalId),
+        tie: false,
       };
       if (!peakHour || candidate.volume > peakHour.volume) {
         peakHour = candidate;
+      } else if (candidate.volume === peakHour.volume) {
+        peakHour = { ...peakHour, tie: true };
       }
     }
   }
@@ -245,11 +233,7 @@ export function calculateStudySummary(
 
   const byMovement = movementKeys.map((key) => {
     const volume = rows.reduce((total, row) => total + valueOrZero(row[key]), 0);
-    return {
-      movement: movementLabels[key],
-      volume,
-      percent: totalMotorized > 0 ? (volume / totalMotorized) * 100 : 0,
-    };
+    return { movement: movementLabels[key], volume, percent: totalMotorized > 0 ? (volume / totalMotorized) * 100 : 0 };
   });
 
   const queueByAccess = accesses.map((access) => {
@@ -271,9 +255,7 @@ export function calculateStudySummary(
   const fallbackProgram = signalInput.programs?.[0];
   const signalProgram = program ?? fallbackProgram;
   const cycleSeconds = signalProgram?.cycleSeconds && signalProgram.cycleSeconds > 0 ? signalProgram.cycleSeconds : null;
-  const phaseGreen = signalProgram?.phaseTimings.find(
-    (phase) => typeof phase.greenSeconds === 'number' && phase.greenSeconds >= 0,
-  )?.greenSeconds;
+  const phaseGreen = signalProgram?.phaseTimings.find((phase) => typeof phase.greenSeconds === 'number' && phase.greenSeconds >= 0)?.greenSeconds;
   const effectiveGreenSeconds =
     typeof signalProgram?.greenSeconds === 'number' && signalProgram.greenSeconds >= 0
       ? signalProgram.greenSeconds
@@ -286,10 +268,9 @@ export function calculateStudySummary(
       ? signalInput.observedSaturationFlowPerLane
       : null;
   const totalLanes = accesses.reduce((total, access) => total + Math.max(0, access.lanes), 0);
-  const capacity =
-    saturationFlowPerLane !== null && greenRatio !== null && totalLanes > 0
-      ? saturationFlowPerLane * totalLanes * greenRatio
-      : null;
+  const capacity = saturationFlowPerLane !== null && greenRatio !== null && totalLanes > 0
+    ? saturationFlowPerLane * totalLanes * greenRatio
+    : null;
   const peakHourFlow = peakHour?.volume ?? null;
   const volumeCapacityRatio = peakHourFlow !== null && capacity !== null && capacity > 0 ? peakHourFlow / capacity : null;
 
@@ -306,15 +287,7 @@ export function calculateStudySummary(
     byAccess,
     byMovement,
     queueByAccess,
-    signalIndicators: {
-      peakHourFlow,
-      cycleSeconds,
-      effectiveGreenSeconds,
-      greenRatio,
-      saturationFlowPerLane,
-      capacity,
-      volumeCapacityRatio,
-    },
+    signalIndicators: { peakHourFlow, cycleSeconds, effectiveGreenSeconds, greenRatio, saturationFlowPerLane, capacity, volumeCapacityRatio },
     completeRows,
     incompleteRows,
     errorRows,
