@@ -269,6 +269,31 @@ function applyRoadTrafficToStudy(study: Study, record: RoadTrafficRecord): Study
   };
 }
 
+function createOneHourStudy(intersectionId: string, baseStudy?: Study): Study {
+  const study = baseStudy ?? createDefaultStudy(intersectionId);
+  return rebuildStudyRows({
+    ...study,
+    intersectionId,
+    metadata: {
+      ...study.metadata,
+      startTime: DEFAULT_START_TIME,
+      endTime: DEFAULT_END_TIME,
+      intervalMinutes: DEFAULT_INTERVAL_MINUTES,
+    },
+  });
+}
+
+export function createTrafficStudyForIntersection(
+  record: RoadTrafficRecord,
+  intersection: Intersection,
+  baseStudy?: Study,
+): CorridorTrafficStudy {
+  return {
+    intersection,
+    study: applyRoadTrafficToStudy(createOneHourStudy(intersection.id, baseStudy), record),
+  };
+}
+
 export function createCorridorTrafficStudies(
   record: RoadTrafficRecord,
   intersections: Intersection[],
@@ -281,21 +306,7 @@ export function createCorridorTrafficStudies(
     throw new Error(`Interseccion origen no encontrada: ${sourceIntersectionId}`);
   }
 
-  return findCorridorIntersections(intersections, sourceIntersection.id).map((intersection) => {
-    const baseStudy = createDefaultStudy(intersection.id);
-    const oneHourStudy = rebuildStudyRows({
-      ...baseStudy,
-      metadata: {
-        ...baseStudy.metadata,
-        startTime: DEFAULT_START_TIME,
-        endTime: DEFAULT_END_TIME,
-        intervalMinutes: DEFAULT_INTERVAL_MINUTES,
-      },
-    });
-
-    return {
-      intersection,
-      study: applyRoadTrafficToStudy(oneHourStudy, record),
-    };
-  });
+  return findCorridorIntersections(intersections, sourceIntersection.id).map((intersection) =>
+    createTrafficStudyForIntersection(record, intersection),
+  );
 }
