@@ -325,3 +325,24 @@ export function removeSignalMovementAssignment(study: Study, assignmentId: strin
     },
   });
 }
+
+export function validateStudy(study: Study, captureComplete: boolean, confirmLegacy = false): Study {
+  const isObserved = (study.source ?? 'observed') === 'observed';
+  const legacyApproved = !study.legacyUnverified || confirmLegacy;
+  const validated = isObserved && captureComplete && legacyApproved;
+
+  return {
+    ...study,
+    status: validated ? 'validated' : 'incomplete',
+    legacyUnverified: validated ? false : study.legacyUnverified,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export function markStudyExported(study: Study): Study {
+  return {
+    ...study,
+    status: study.status === 'validated' ? 'exported' : 'incomplete',
+    updatedAt: new Date().toISOString(),
+  };
+}
