@@ -81,6 +81,7 @@ export interface CaptureRow {
   maxQueue: NumericCaptureValue;
   averageQueue: NumericCaptureValue;
   queueLength: NumericCaptureValue;
+  stoppedVehiclesPerCycle: NumericCaptureValue;
   observedCycle: NumericCaptureValue;
   observedProgram: string;
   notes: string;
@@ -93,6 +94,7 @@ export interface StudyMetadata {
   intervalMinutes: number;
   surveyor: string;
   weather: string;
+  observedSaturationFlowPerLane: NumericCaptureValue;
   notes: string;
 }
 
@@ -117,6 +119,43 @@ export interface PeakHourSummary {
   factorLabel: 'FHP' | 'Factor de uniformidad de hora pico';
 }
 
+export interface IntervalSummary {
+  intervalId: string;
+  label: string;
+  start: string;
+  end: string;
+  left: number;
+  through: number;
+  right: number;
+  uTurn: number;
+  total: number;
+  heavy: number;
+  motorcycles: number;
+  bicycles: number;
+  pedestrians: number;
+  notes: string;
+}
+
+export interface QueueAccessSummary {
+  accessId: string;
+  accessName: string;
+  maxQueue: number | null;
+  averageQueue: number | null;
+  maxQueueLength: number | null;
+  stoppedVehiclesPerCycle: number | null;
+  notes: string;
+}
+
+export interface SignalIndicators {
+  peakHourFlow: number | null;
+  cycleSeconds: number | null;
+  effectiveGreenSeconds: number | null;
+  greenRatio: number | null;
+  saturationFlowPerLane: number | null;
+  capacity: number | null;
+  volumeCapacityRatio: number | null;
+}
+
 export interface StudySummary {
   totalMotorized: number;
   totalHeavy: number;
@@ -125,8 +164,12 @@ export interface StudySummary {
   totalPedestrians: number;
   peakInterval: { label: string; volume: number } | null;
   peakHour: PeakHourSummary | null;
+  averageIntervalVolume: number;
+  byInterval: IntervalSummary[];
   byAccess: Array<{ accessId: string; accessName: string; volume: number }>;
   byMovement: Array<{ movement: string; volume: number; percent: number }>;
+  queueByAccess: QueueAccessSummary[];
+  signalIndicators: SignalIndicators;
   dataQuality: string[];
   issues: string[];
 }
