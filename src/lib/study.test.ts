@@ -7,8 +7,29 @@ import {
   updateProgramPhase,
   updateProgramPhaseCount,
 } from './study';
+import type { StudyMetadata } from './types';
 
 describe('study configuration editing', () => {
+  it('creates a study from shared metadata and generates matching intervals', () => {
+    const metadata: StudyMetadata = {
+      date: '2026-09-27',
+      startTime: '06:30',
+      endTime: '07:30',
+      intervalMinutes: 10,
+      surveyor: 'Hiram',
+      weather: 'Despejado',
+      observedSaturationFlowPerLane: 1800,
+      notes: 'Estudio matutino',
+    };
+
+    const study = createDefaultStudy('INT-003', metadata);
+
+    expect(study.metadata).toEqual(metadata);
+    expect(study.intervals).toHaveLength(6);
+    expect(study.intervals[0]).toMatchObject({ start: '06:30', end: '06:40' });
+    expect(study.rows[0]?.intervalLabel).toContain('06:30');
+  });
+
   it('updates access name, lanes, and movement availability', () => {
     const study = createDefaultStudy('INT-002');
     const renamed = updateAccessConfig(study, 'north', { name: 'Acceso principal', lanes: 3 });
