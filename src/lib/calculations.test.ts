@@ -64,6 +64,10 @@ function row(interval: IntervalBlock, values: Partial<CaptureRow>): CaptureRow {
   };
 }
 
+function interval(start: string, end: string): IntervalBlock {
+  return { id: `${start}-${end}`, start, end, label: `${start}-${end}` };
+}
+
 describe('capture calculations', () => {
   it('sums only enabled motorized movements and keeps disabled movement as N/A', () => {
     expect(calculateRowMotorizedTotal(row(intervals[0], { left: 12, through: 87, right: 19, uTurn: null }), access)).toBe(118);
@@ -130,6 +134,47 @@ describe('capture calculations', () => {
       factor: 0.8125,
       factorLabel: 'FHP',
     });
+  });
+
+  it('does not use an incomplete interval in a peak-hour window', () => {
+    const rows = [
+      row(intervals[0], { through: 100 }),
+      row(intervals[1], { through: 120 }),
+      row(intervals[2], { left: null, through: 140 }),
+      row(intervals[3], { through: 160 }),
+    ];
+    const summary = calculateStudySummary(rows, [access], 15);
+    expect(summary.peakHour).toBeNull();
+    expect(summary.isPartial).toBe(true);
+  });
+
+  it('keeps the first peak-hour window on a tie and marks the tie', () => {
+    const fiveIntervals = [
+      interval('07:00', '07:15'),
+      interval('07:15', '07:30'),
+      interval('07:30', '07:45'),
+      interval('07:45', '08:00'),
+      interval('08:00', '08:15'),
+    ];
+    const rows = fiveIntervals.map((item) => row(item, { through: 100 }));
+    const summary = calculateStudySummary(rows, [access], 15);
+    expect(summary.peakHour).toMatchObject({ label: '07:00-08:00', volume: 400, tie: true });
+  });
+
+  it.each([
+    [10, 6],
+    [20, 3],
+    [30, 2],
+  ])('calculates an equivalent uniformity factor for %s minute intervals', (minutes, count) => {
+    const generated = Array.from({ length: count }, (_, index) => {
+      const startMinutes = 7 * 60 + index * minutes;
+      const endMinutes = startMinutes + minutes;
+      const format = (value: number) => `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+      return interval(format(startMinutes), format(endMinutes));
+    });
+    const summary = calculateStudySummary(generated.map((item) => row(item, { through: 100 })), [access], minutes);
+    expect(summary.peakHour?.factor).toBe(1);
+    expect(summary.peakHour?.factorLabel).toBe('Factor de uniformidad de hora pico');
   });
 
   it('does not invent a peak hour for studies shorter than one hour', () => {
