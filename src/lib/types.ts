@@ -12,6 +12,8 @@ export interface Intersection {
   latitude: number;
   longitude: number;
   notes: string;
+  linkedCsvFileName?: string;
+  relatedIntersectionIds?: string[];
 }
 
 export interface AccessConfig {
@@ -177,6 +179,7 @@ export interface StudySummary {
 
 export interface StoredState {
   catalogVersion: string;
+  customIntersections?: Intersection[];
   intersectionConfigs: Record<string, IntersectionConfig>;
   lastConfiguration: IntersectionConfig | null;
   activeStudy: Study | null;
