@@ -1,4 +1,11 @@
-import type { AccessConfig, CaptureRow, IntervalBlock, MovementKey, StudySummary } from './types';
+import type {
+  AccessConfig,
+  CaptureRow,
+  IntervalBlock,
+  MovementKey,
+  SignalProgram,
+  StudySummary,
+} from './types';
 import { isOneHourCompatible } from './time';
 
 const movementLabels: Record<MovementKey, string> = {
@@ -10,12 +17,35 @@ const movementLabels: Record<MovementKey, string> = {
 
 const movementKeys: MovementKey[] = ['left', 'through', 'right', 'uTurn'];
 
-function valueOrZero(value: number | null): number {
+interface SignalCalculationInput {
+  programs?: SignalProgram[];
+  observedSaturationFlowPerLane?: number | null;
+}
+
+function valueOrZero(value: number | null | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 function isMissing(value: number | null | undefined): value is null | undefined {
   return value === null || value === undefined;
+}
+
+function averageCaptured(values: Array<number | null | undefined>): number | null {
+  const captured = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  if (captured.length === 0) {
+    return null;
+  }
+
+  return captured.reduce((total, value) => total + value, 0) / captured.length;
+}
+
+function maxCaptured(values: Array<number | null | undefined>): number | null {
+  const captured = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  return captured.length === 0 ? null : Math.max(...captured);
+}
+
+function combineNotes(rows: CaptureRow[]): string {
+  return Array.from(new Set(rows.map((row) => row.notes.trim()).filter(Boolean))).join(' | ');
 }
 
 export function calculateRowMotorizedTotal(row: CaptureRow, access: AccessConfig): number {
@@ -64,6 +94,18 @@ export function validateCaptureRow(row: CaptureRow, access: AccessConfig): strin
     issues.push('Pesados + motos supera el total motorizado.');
   }
 
+  for (const [label, value] of [
+    ['Cola máxima', row.maxQueue],
+    ['Cola promedio', row.averageQueue],
+    ['Longitud de cola', row.queueLength],
+    ['Vehículos detenidos por ciclo', row.stoppedVehiclesPerCycle],
+    ['Ciclo observado', row.observedCycle],
+  ] as const) {
+    if (!isMissing(value) && (!Number.isFinite(value) || value < 0)) {
+      issues.push(`${label} debe ser mayor o igual a cero.`);
+    }
+  }
+
   return issues;
 }
 
@@ -88,6 +130,7 @@ export function createEmptyCaptureRows(intervals: IntervalBlock[], accesses: Acc
       maxQueue: null,
       averageQueue: null,
       queueLength: null,
+      stoppedVehiclesPerCycle: null,
       observedCycle: null,
       observedProgram: '',
       notes: '',
@@ -95,39 +138,58 @@ export function createEmptyCaptureRows(intervals: IntervalBlock[], accesses: Acc
   );
 }
 
-export function calculateStudySummary(rows: CaptureRow[], accesses: AccessConfig[], intervalMinutes: number): StudySummary {
+export function calculateStudySummary(
+  rows: CaptureRow[],
+  accesses: AccessConfig[],
+  intervalMinutes: number,
+  signalInput: SignalCalculationInput = {},
+): StudySummary {
   const accessById = new Map(accesses.map((access) => [access.id, access]));
   const issues = rows.flatMap((row) => validateCaptureRow(row, accessById.get(row.accessId) ?? accesses[0]));
   const totalForRow = (row: CaptureRow) => calculateRowMotorizedTotal(row, accessById.get(row.accessId) ?? accesses[0]);
-  const intervalVolumes = new Map<string, { label: string; start: string; end: string; volume: number }>();
 
+  const intervalRows = new Map<string, CaptureRow[]>();
   for (const row of rows) {
-    const current = intervalVolumes.get(row.intervalId) ?? {
-      label: row.intervalLabel,
-      start: row.intervalStart,
-      end: row.intervalEnd,
-      volume: 0,
-    };
-    current.volume += totalForRow(row);
-    intervalVolumes.set(row.intervalId, current);
+    const current = intervalRows.get(row.intervalId) ?? [];
+    current.push(row);
+    intervalRows.set(row.intervalId, current);
   }
 
-  const orderedIntervals = Array.from(intervalVolumes.values());
+  const byInterval = Array.from(intervalRows.entries()).map(([intervalId, groupedRows]) => {
+    const first = groupedRows[0];
+    return {
+      intervalId,
+      label: first.intervalLabel,
+      start: first.intervalStart,
+      end: first.intervalEnd,
+      left: groupedRows.reduce((total, row) => total + valueOrZero(row.left), 0),
+      through: groupedRows.reduce((total, row) => total + valueOrZero(row.through), 0),
+      right: groupedRows.reduce((total, row) => total + valueOrZero(row.right), 0),
+      uTurn: groupedRows.reduce((total, row) => total + valueOrZero(row.uTurn), 0),
+      total: groupedRows.reduce((total, row) => total + totalForRow(row), 0),
+      heavy: groupedRows.reduce((total, row) => total + valueOrZero(row.heavy), 0),
+      motorcycles: groupedRows.reduce((total, row) => total + valueOrZero(row.motorcycles), 0),
+      bicycles: groupedRows.reduce((total, row) => total + valueOrZero(row.bicycles), 0),
+      pedestrians: groupedRows.reduce((total, row) => total + valueOrZero(row.pedestrians), 0),
+      notes: combineNotes(groupedRows),
+    };
+  });
+
   const totalMotorized = rows.reduce((total, row) => total + totalForRow(row), 0);
-  const peakInterval = orderedIntervals.reduce<{ label: string; volume: number } | null>((best, item) => {
-    if (!best || item.volume > best.volume) {
-      return { label: item.label, volume: item.volume };
+  const peakInterval = byInterval.reduce<{ label: string; volume: number } | null>((best, item) => {
+    if (!best || item.total > best.volume) {
+      return { label: item.label, volume: item.total };
     }
     return best;
   }, null);
 
   const slotsPerHour = isOneHourCompatible(intervalMinutes) ? 60 / intervalMinutes : 0;
   let peakHour = null;
-  if (slotsPerHour > 0 && orderedIntervals.length >= slotsPerHour) {
-    for (let index = 0; index <= orderedIntervals.length - slotsPerHour; index += 1) {
-      const window = orderedIntervals.slice(index, index + slotsPerHour);
-      const volume = window.reduce((total, item) => total + item.volume, 0);
-      const maxIntervalVolume = Math.max(...window.map((item) => item.volume));
+  if (slotsPerHour > 0 && byInterval.length >= slotsPerHour) {
+    for (let index = 0; index <= byInterval.length - slotsPerHour; index += 1) {
+      const window = byInterval.slice(index, index + slotsPerHour);
+      const volume = window.reduce((total, item) => total + item.total, 0);
+      const maxIntervalVolume = Math.max(...window.map((item) => item.total));
       const candidate = {
         label: `${window[0].start}-${window[window.length - 1].end}`,
         volume,
@@ -156,6 +218,47 @@ export function calculateStudySummary(rows: CaptureRow[], accesses: AccessConfig
     };
   });
 
+  const queueByAccess = accesses.map((access) => {
+    const accessRows = rows.filter((row) => row.accessId === access.id);
+    return {
+      accessId: access.id,
+      accessName: access.name,
+      maxQueue: maxCaptured(accessRows.map((row) => row.maxQueue)),
+      averageQueue: averageCaptured(accessRows.map((row) => row.averageQueue)),
+      maxQueueLength: maxCaptured(accessRows.map((row) => row.queueLength)),
+      stoppedVehiclesPerCycle: averageCaptured(accessRows.map((row) => row.stoppedVehiclesPerCycle)),
+      notes: combineNotes(accessRows),
+    };
+  });
+
+  const program = signalInput.programs?.find(
+    (item) => typeof item.cycleSeconds === 'number' && item.cycleSeconds > 0 && typeof item.greenSeconds === 'number',
+  );
+  const fallbackProgram = signalInput.programs?.[0];
+  const signalProgram = program ?? fallbackProgram;
+  const cycleSeconds = signalProgram?.cycleSeconds && signalProgram.cycleSeconds > 0 ? signalProgram.cycleSeconds : null;
+  const phaseGreen = signalProgram?.phaseTimings.find(
+    (phase) => typeof phase.greenSeconds === 'number' && phase.greenSeconds >= 0,
+  )?.greenSeconds;
+  const effectiveGreenSeconds =
+    typeof signalProgram?.greenSeconds === 'number' && signalProgram.greenSeconds >= 0
+      ? signalProgram.greenSeconds
+      : typeof phaseGreen === 'number'
+        ? phaseGreen
+        : null;
+  const greenRatio = cycleSeconds && effectiveGreenSeconds !== null ? effectiveGreenSeconds / cycleSeconds : null;
+  const saturationFlowPerLane =
+    typeof signalInput.observedSaturationFlowPerLane === 'number' && signalInput.observedSaturationFlowPerLane > 0
+      ? signalInput.observedSaturationFlowPerLane
+      : null;
+  const totalLanes = accesses.reduce((total, access) => total + Math.max(0, access.lanes), 0);
+  const capacity =
+    saturationFlowPerLane !== null && greenRatio !== null && totalLanes > 0
+      ? saturationFlowPerLane * totalLanes * greenRatio
+      : null;
+  const peakHourFlow = peakHour?.volume ?? null;
+  const volumeCapacityRatio = peakHourFlow !== null && capacity !== null && capacity > 0 ? peakHourFlow / capacity : null;
+
   const completeRows = rows.length - new Set(issues).size;
 
   return {
@@ -166,13 +269,27 @@ export function calculateStudySummary(rows: CaptureRow[], accesses: AccessConfig
     totalPedestrians: rows.reduce((total, row) => total + valueOrZero(row.pedestrians), 0),
     peakInterval,
     peakHour,
+    averageIntervalVolume: byInterval.length > 0 ? totalMotorized / byInterval.length : 0,
+    byInterval,
     byAccess,
     byMovement,
+    queueByAccess,
+    signalIndicators: {
+      peakHourFlow,
+      cycleSeconds,
+      effectiveGreenSeconds,
+      greenRatio,
+      saturationFlowPerLane,
+      capacity,
+      volumeCapacityRatio,
+    },
     dataQuality: [
       `${Math.max(0, completeRows)} filas revisadas`,
       `${accesses.length} accesos configurados`,
       issues.length === 0 ? 'Sin errores obligatorios' : `${issues.length} observaciones por revisar`,
-      'Capacidad y v/c: N/D por falta de datos de saturacion',
+      capacity !== null && volumeCapacityRatio !== null
+        ? 'Capacidad y v/c calculados con saturación observada, carriles y proporción de verde.'
+        : 'Capacidad y v/c: N/D por falta de saturación, carriles o tiempos semafóricos.',
     ],
     issues,
   };
