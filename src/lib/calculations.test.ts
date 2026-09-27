@@ -5,7 +5,7 @@ import {
   createEmptyCaptureRows,
   validateCaptureRow,
 } from './calculations';
-import type { AccessConfig, CaptureRow, IntervalBlock } from './types';
+import type { AccessConfig, CaptureRow, IntervalBlock, SignalProgram } from './types';
 
 const intervals: IntervalBlock[] = [
   { id: '07:00-07:15', start: '07:00', end: '07:15', label: '07:00-07:15' },
@@ -19,6 +19,21 @@ const access: AccessConfig = {
   name: 'Norte',
   lanes: 2,
   movements: { left: true, through: true, right: true, uTurn: false },
+};
+
+const signalProgram: SignalProgram = {
+  id: 'p1',
+  name: 'P1',
+  startTime: '07:00',
+  endTime: '09:00',
+  cycleSeconds: 90,
+  phases: 2,
+  greenSeconds: 40,
+  amberSeconds: 3,
+  redSeconds: 47,
+  clearanceSeconds: null,
+  phaseTimings: [],
+  notes: '',
 };
 
 function row(interval: IntervalBlock, values: Partial<CaptureRow>): CaptureRow {
@@ -41,6 +56,7 @@ function row(interval: IntervalBlock, values: Partial<CaptureRow>): CaptureRow {
     maxQueue: null,
     averageQueue: null,
     queueLength: null,
+    stoppedVehiclesPerCycle: null,
     observedCycle: null,
     observedProgram: '',
     notes: '',
@@ -77,6 +93,7 @@ describe('capture calculations', () => {
       intervalLabel: '07:00-07:15',
       accessName: 'Norte',
       uTurn: null,
+      stoppedVehiclesPerCycle: null,
     });
   });
 
@@ -104,5 +121,80 @@ describe('capture calculations', () => {
     const summary = calculateStudySummary([row(intervals[0], { left: 10, through: 90, right: 0 })], [access], 15);
 
     expect(summary.peakHour).toBeNull();
+  });
+
+  it('aggregates ficha-ready totals by interval and computes the average interval volume', () => {
+    const secondAccess: AccessConfig = {
+      ...access,
+      id: 'south',
+      name: 'Sur',
+    };
+    const rows = [
+      row(intervals[0], { left: 10, through: 20, right: 5, heavy: 3, motorcycles: 2, notes: 'Norte cargado' }),
+      { ...row(intervals[0], { left: 4, through: 8, right: 3, heavy: 1, motorcycles: 1 }), id: 'south-row', accessId: 'south', accessName: 'Sur' },
+      row(intervals[1], { left: 6, through: 12, right: 2, heavy: 2, motorcycles: 1 }),
+      { ...row(intervals[1], { left: 2, through: 4, right: 4, heavy: 1, motorcycles: 0 }), id: 'south-row-2', accessId: 'south', accessName: 'Sur' },
+    ];
+
+    const summary = calculateStudySummary(rows, [access, secondAccess], 15);
+
+    expect(summary.byInterval).toHaveLength(2);
+    expect(summary.byInterval[0]).toMatchObject({
+      label: '07:00-07:15',
+      left: 14,
+      through: 28,
+      right: 8,
+      total: 50,
+      heavy: 4,
+      motorcycles: 3,
+      notes: 'Norte cargado',
+    });
+    expect(summary.averageIntervalVolume).toBe(40);
+  });
+
+  it('summarizes queue operation by access and calculates signal indicators when enough data exists', () => {
+    const rows = [
+      row(intervals[0], {
+        left: 10,
+        through: 90,
+        right: 0,
+        maxQueue: 14,
+        averageQueue: 8,
+        queueLength: 56,
+        stoppedVehiclesPerCycle: 7,
+      }),
+      row(intervals[1], {
+        left: 10,
+        through: 110,
+        right: 0,
+        maxQueue: 18,
+        averageQueue: 10,
+        queueLength: 72,
+        stoppedVehiclesPerCycle: 9,
+      }),
+      row(intervals[2], { left: 10, through: 130, right: 0 }),
+      row(intervals[3], { left: 10, through: 150, right: 0 }),
+    ];
+
+    const summary = calculateStudySummary(rows, [access], 15, {
+      programs: [signalProgram],
+      observedSaturationFlowPerLane: 1800,
+    });
+
+    expect(summary.queueByAccess[0]).toMatchObject({
+      accessName: 'Norte',
+      maxQueue: 18,
+      averageQueue: 9,
+      maxQueueLength: 72,
+      stoppedVehiclesPerCycle: 8,
+    });
+    expect(summary.signalIndicators).toMatchObject({
+      peakHourFlow: 520,
+      effectiveGreenSeconds: 40,
+      greenRatio: 40 / 90,
+      saturationFlowPerLane: 1800,
+      capacity: 1600,
+      volumeCapacityRatio: 0.325,
+    });
   });
 });
