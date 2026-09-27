@@ -17,9 +17,14 @@ describe('generateIntervals', () => {
     );
   });
 
-  it('rejects an end time that is not after the start time', () => {
-    expect(() => generateIntervals('08:00', '07:00', 15)).toThrow(
-      'La hora de termino debe ser posterior a la hora de inicio.',
-    );
+  it('supports a study that crosses midnight', () => {
+    expect(generateIntervals('23:30', '01:00', 15)).toEqual([
+      { id: '23:30-23:45', start: '23:30', end: '23:45', label: '23:30-23:45' },
+      { id: '23:45-00:00', start: '23:45', end: '00:00', label: '23:45-00:00' },
+      { id: '00:00-00:15', start: '00:00', end: '00:15', label: '00:00-00:15' },
+      { id: '00:15-00:30', start: '00:15', end: '00:30', label: '00:15-00:30' },
+      { id: '00:30-00:45', start: '00:30', end: '00:45', label: '00:30-00:45' },
+      { id: '00:45-01:00', start: '00:45', end: '01:00', label: '00:45-01:00' },
+    ]);
   });
 });
