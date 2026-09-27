@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   createDefaultStudy,
+  hasCapturedData,
+  rebuildStudyRowsPreservingCapture,
   updateAccessConfig,
   updateAccessMovement,
   updateProgram,
@@ -32,21 +34,53 @@ describe('study configuration editing', () => {
     expect(study.rows[0]?.heavy).toBeNull();
   });
 
+  it('starts signal configuration neutral instead of pretending measured timings', () => {
+    const study = createDefaultStudy('INT-002');
+    expect(study.configurationSnapshot.inherited).toBe(true);
+    expect(study.configurationSnapshot.programs[0]).toMatchObject({
+      cycleSeconds: null,
+      greenSeconds: null,
+      amberSeconds: null,
+      redSeconds: null,
+      phases: null,
+    });
+    expect(study.configurationSnapshot.signalMovementAssignments).toEqual([]);
+  });
+
   it('updates access name, lanes, and movement availability without inventing a zero observation', () => {
     const study = createDefaultStudy('INT-002');
     const renamed = updateAccessConfig(study, 'north', { name: 'Acceso principal', lanes: 3 });
     const updated = updateAccessMovement(renamed, 'north', 'uTurn', true);
     const access = updated.configurationSnapshot.accesses.find((item) => item.id === 'north');
 
-    expect(access).toMatchObject({
-      name: 'Acceso principal',
-      lanes: 3,
-      movements: { uTurn: true },
-    });
+    expect(access).toMatchObject({ name: 'Acceso principal', lanes: 3, movements: { uTurn: true } });
     expect(updated.rows.some((row) => row.accessName === 'Acceso principal' && row.uTurn === null)).toBe(true);
   });
 
-  it('configures signal green, amber, red, and individual phase cycles', () => {
+  it('preserves compatible captured rows when configuration labels or study range are rebuilt', () => {
+    const study = createDefaultStudy('INT-002');
+    const captured = {
+      ...study,
+      rows: study.rows.map((row, index) =>
+        index === 0
+          ? { ...row, left: 1, through: 10, right: 2, heavy: 1, motorcycles: 1, bicycles: 0, pedestrians: 0 }
+          : row,
+      ),
+    };
+    expect(hasCapturedData(captured)).toBe(true);
+
+    const renamed = updateAccessConfig(captured, 'north', { name: 'Acceso conservado' });
+    expect(renamed.rows[0]).toMatchObject({ left: 1, through: 10, right: 2, accessName: 'Acceso conservado' });
+
+    const extended = rebuildStudyRowsPreservingCapture({
+      ...renamed,
+      metadata: { ...renamed.metadata, endTime: '09:15' },
+    });
+    expect(extended.rows.find((row) => row.id === captured.rows[0].id)).toMatchObject({ left: 1, through: 10, right: 2 });
+    expect(extended.intervals.at(-1)?.label).toBe('09:00-09:15');
+  });
+
+  it('configures signal green, amber, red, and individual phase cycles only after explicit edits', () => {
     const study = createDefaultStudy('INT-002');
     const withProgram = updateProgram(study, 'p1', {
       cycleSeconds: 120,
@@ -64,20 +98,10 @@ describe('study configuration editing', () => {
     });
     const program = updated.configurationSnapshot.programs[0];
 
-    expect(program).toMatchObject({
-      cycleSeconds: 120,
-      greenSeconds: 45,
-      amberSeconds: 4,
-      redSeconds: 71,
-      phases: 3,
-    });
+    expect(program).toMatchObject({ cycleSeconds: 120, greenSeconds: 45, amberSeconds: 4, redSeconds: 71, phases: 3 });
     expect(program.phaseTimings).toHaveLength(3);
     expect(program.phaseTimings[1]).toMatchObject({
-      name: 'Fase 2 - Oriente/Poniente',
-      greenSeconds: 35,
-      amberSeconds: 4,
-      redSeconds: 81,
-      cycleSeconds: 120,
+      name: 'Fase 2 - Oriente/Poniente', greenSeconds: 35, amberSeconds: 4, redSeconds: 81, cycleSeconds: 120,
     });
   });
 });
