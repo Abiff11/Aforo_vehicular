@@ -3,6 +3,7 @@ import {
   addSignalMovementAssignment,
   createDefaultStudy,
   hasCapturedData,
+  markStudyExported,
   rebuildStudyRowsPreservingCapture,
   removeSignalMovementAssignment,
   updateAccessConfig,
@@ -11,6 +12,7 @@ import {
   updateProgramPhase,
   updateProgramPhaseCount,
   updateSignalMovementAssignment,
+  validateStudy,
 } from './study';
 import type { StudyMetadata } from './types';
 
@@ -135,5 +137,21 @@ describe('study configuration editing', () => {
 
     const removed = removeSignalMovementAssignment(updated, assignment!.id);
     expect(removed.configurationSnapshot.signalMovementAssignments).toEqual([]);
+  });
+
+  it('validates only complete observed studies and does not let export hide an incomplete state', () => {
+    const observed = createDefaultStudy('INT-002');
+    expect(validateStudy(observed, false).status).toBe('incomplete');
+    expect(validateStudy(observed, true).status).toBe('validated');
+
+    const estimated = { ...observed, source: 'estimated_tdpa' as const };
+    expect(validateStudy(estimated, true).status).toBe('incomplete');
+
+    const legacy = { ...observed, legacyUnverified: true };
+    expect(validateStudy(legacy, true).status).toBe('incomplete');
+    expect(validateStudy(legacy, true, true)).toMatchObject({ status: 'validated', legacyUnverified: false });
+
+    expect(markStudyExported(validateStudy(observed, false)).status).toBe('incomplete');
+    expect(markStudyExported(validateStudy(observed, true)).status).toBe('exported');
   });
 });
