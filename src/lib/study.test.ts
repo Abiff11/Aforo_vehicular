@@ -28,9 +28,11 @@ describe('study configuration editing', () => {
     expect(study.intervals).toHaveLength(6);
     expect(study.intervals[0]).toMatchObject({ start: '06:30', end: '06:40' });
     expect(study.rows[0]?.intervalLabel).toContain('06:30');
+    expect(study.rows[0]?.left).toBeNull();
+    expect(study.rows[0]?.heavy).toBeNull();
   });
 
-  it('updates access name, lanes, and movement availability', () => {
+  it('updates access name, lanes, and movement availability without inventing a zero observation', () => {
     const study = createDefaultStudy('INT-002');
     const renamed = updateAccessConfig(study, 'north', { name: 'Acceso principal', lanes: 3 });
     const updated = updateAccessMovement(renamed, 'north', 'uTurn', true);
@@ -41,7 +43,7 @@ describe('study configuration editing', () => {
       lanes: 3,
       movements: { uTurn: true },
     });
-    expect(updated.rows.some((row) => row.accessName === 'Acceso principal' && row.uTurn === 0)).toBe(true);
+    expect(updated.rows.some((row) => row.accessName === 'Acceso principal' && row.uTurn === null)).toBe(true);
   });
 
   it('configures signal green, amber, red, and individual phase cycles', () => {
