@@ -1,0 +1,156 @@
+.section-description {
+  margin: 4px 0 0;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.study-form {
+  margin-top: 16px;
+  max-width: 980px;
+}
+
+.danger-button,
+.danger-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 6px;
+  padding: 9px 13px;
+  font: inherit;
+  font-weight: 600;
+}
+
+.danger-button {
+  border: 1px solid #dc2626;
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.danger-secondary {
+  border: 1px solid #fecaca;
+  background: #fff7f7;
+  color: #b91c1c;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.danger-button:hover,
+.danger-secondary:hover {
+  filter: brightness(0.97);
+}
+
+.intersection-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.intersection-card-heading h3 {
+  margin: 0;
+}
+
+.summary-grid,
+.dashboard-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.kpi {
+  display: grid;
+  gap: 6px;
+  min-height: 92px;
+  padding: 14px;
+  border: 1px solid #d6deea;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.kpi span {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.kpi strong {
+  align-self: end;
+  color: #172033;
+  font-size: 21px;
+  line-height: 1.2;
+}
+
+.results-dashboard {
+  display: grid;
+  gap: 18px;
+}
+
+.dashboard-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.dashboard-chart {
+  min-width: 0;
+}
+
+.dashboard-chart h3,
+.dashboard-table h3 {
+  margin-bottom: 14px;
+}
+
+.chart-frame {
+  width: 100%;
+  min-height: 260px;
+}
+
+.dashboard-table {
+  min-width: 0;
+}
+
+.dashboard-table-wrap {
+  max-height: 360px;
+}
+
+.dashboard-table table {
+  min-width: 980px;
+}
+
+.compact-indicators table {
+  min-width: 620px;
+}
+
+.import-result-panel {
+  margin-bottom: 16px;
+}
+
+.import-result-panel p {
+  margin-bottom: 0;
+  color: #475569;
+}
+
+abbr[title] {
+  cursor: help;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 900px) {
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .intersection-card-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .dashboard-charts {
+    grid-template-columns: 1fr;
+  }
+}
