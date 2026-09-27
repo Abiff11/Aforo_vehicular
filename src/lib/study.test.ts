@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addSignalMovementAssignment,
   createDefaultStudy,
   hasCapturedData,
   rebuildStudyRowsPreservingCapture,
+  removeSignalMovementAssignment,
   updateAccessConfig,
   updateAccessMovement,
   updateProgram,
   updateProgramPhase,
   updateProgramPhaseCount,
+  updateSignalMovementAssignment,
 } from './study';
 import type { StudyMetadata } from './types';
 
@@ -103,5 +106,34 @@ describe('study configuration editing', () => {
     expect(program.phaseTimings[1]).toMatchObject({
       name: 'Fase 2 - Oriente/Poniente', greenSeconds: 35, amberSeconds: 4, redSeconds: 81, cycleSeconds: 120,
     });
+  });
+
+  it('adds, edits, and removes explicit movement-phase assignments', () => {
+    const base = updateProgramPhaseCount(createDefaultStudy('INT-002'), 'p1', 1);
+    const added = addSignalMovementAssignment(base);
+    const assignment = added.configurationSnapshot.signalMovementAssignments?.[0];
+    expect(assignment).toMatchObject({
+      accessId: 'north',
+      movement: 'through',
+      programId: 'p1',
+      phaseId: 'phase-1',
+      lanes: null,
+      saturationFlowPerLane: null,
+      effectiveGreenSeconds: null,
+    });
+
+    const updated = updateSignalMovementAssignment(added, assignment!.id, {
+      lanes: 2,
+      saturationFlowPerLane: 1800,
+      effectiveGreenSeconds: 40,
+    });
+    expect(updated.configurationSnapshot.signalMovementAssignments?.[0]).toMatchObject({
+      lanes: 2,
+      saturationFlowPerLane: 1800,
+      effectiveGreenSeconds: 40,
+    });
+
+    const removed = removeSignalMovementAssignment(updated, assignment!.id);
+    expect(removed.configurationSnapshot.signalMovementAssignments).toEqual([]);
   });
 });
