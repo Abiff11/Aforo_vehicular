@@ -101,6 +101,7 @@ export interface StudyMetadata {
 export interface Study {
   id: string;
   intersectionId: string;
+  relatedIntersectionIds: string[];
   currentStep: number;
   metadata: StudyMetadata;
   configurationSnapshot: IntersectionConfig;

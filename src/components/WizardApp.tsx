@@ -9,6 +9,7 @@ import {
   FileSpreadsheet,
   RefreshCw,
   Save,
+  Upload,
   X,
 } from 'lucide-react';
 import {
@@ -31,6 +32,12 @@ import { wizardSteps } from '../data/tutorial';
 import { calculateRowMotorizedTotal, calculateStudySummary } from '../lib/calculations';
 import { downloadStudyWorkbook } from '../lib/exportExcel';
 import {
+  calculateRoadTrafficProfile,
+  createCorridorTrafficStudies,
+  getCorridorName,
+  parseRoadTrafficCsv,
+} from '../lib/roadTrafficImport';
+import {
   createDefaultStudy,
   rebuildStudyRows,
   updateAccessConfig,
@@ -40,7 +47,9 @@ import {
   updateProgramPhaseCount,
 } from '../lib/study';
 import { createInitialState, loadStoredState, saveStoredState } from '../lib/storage';
+import type { CorridorTrafficStudy, RoadTrafficProfile } from '../lib/roadTrafficImport';
 import type { CaptureRow, MovementKey, StoredState, Study } from '../lib/types';
+import { IntersectionMap } from './IntersectionMap';
 
 const movementLabels: Record<MovementKey, string> = {
   left: 'Izq',
@@ -49,6 +58,13 @@ const movementLabels: Record<MovementKey, string> = {
   uTurn: 'Retorno',
 };
 const palette = ['#1f6feb', '#16a34a', '#f97316', '#7c3aed'];
+
+interface RoadTrafficImportState {
+  corridorName: string;
+  point: string;
+  profile: RoadTrafficProfile;
+  studies: CorridorTrafficStudy[];
+}
 
 function getInitialState(): StoredState {
   if (typeof localStorage === 'undefined') {
@@ -108,9 +124,38 @@ function updateStudyMetadata(
   return next;
 }
 
+function readFileText(file: File): Promise<string> {
+  if (typeof file.text === 'function') {
+    return file.text();
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo CSV.'));
+    reader.readAsText(file);
+  });
+}
+
+function getStreetNames(intersectionName: string): string[] {
+  return intersectionName
+    .split('/')
+    .map((street) => street.trim())
+    .filter(Boolean);
+}
+
+function shareStreetName(sourceName: string, candidateName: string): boolean {
+  const sourceStreets = getStreetNames(sourceName);
+  const candidateStreets = getStreetNames(candidateName);
+
+  return sourceStreets.some((sourceStreet) => candidateStreets.includes(sourceStreet));
+}
+
 export function WizardApp() {
   const [state, setState] = useState<StoredState>(getInitialState);
   const [helpStepIndex, setHelpStepIndex] = useState<number | null>(null);
+  const [roadTrafficImport, setRoadTrafficImport] = useState<RoadTrafficImportState | null>(null);
+  const [roadTrafficImportError, setRoadTrafficImportError] = useState<string | null>(null);
   const activeStudy = state.activeStudy ?? createDefaultStudy(intersections[0].id);
   const activeHelp = helpStepIndex === null ? null : wizardSteps[helpStepIndex];
   const selectedIntersection =
@@ -132,6 +177,23 @@ export function WizardApp() {
     () => summary.byInterval.map((interval) => ({ interval: interval.label, volume: interval.total })),
     [summary.byInterval],
   );
+  const relatedIntersectionIds = activeStudy.relatedIntersectionIds ?? [];
+  const linkedIntersectionOptions = useMemo(
+    () =>
+      [...intersections]
+        .filter((intersection) => intersection.id !== selectedIntersection.id)
+        .sort((left, right) => {
+          const leftRelated = shareStreetName(selectedIntersection.name, left.name);
+          const rightRelated = shareStreetName(selectedIntersection.name, right.name);
+
+          if (leftRelated !== rightRelated) {
+            return leftRelated ? -1 : 1;
+          }
+
+          return left.mapNumber - right.mapNumber;
+        }),
+    [selectedIntersection],
+  );
 
   function persist(nextState: StoredState): void {
     setState(nextState);
@@ -140,6 +202,38 @@ export function WizardApp() {
 
   function setActiveStudy(study: Study): void {
     persist({ ...state, activeStudy: study });
+  }
+
+  async function importRoadTrafficCsv(files: FileList | null): Promise<void> {
+    const file = files?.[0];
+    if (!file) return;
+
+    try {
+      const [record] = parseRoadTrafficCsv(await readFileText(file));
+      if (!record) {
+        throw new Error('El CSV no contiene registros de TDPA.');
+      }
+
+      const studies = createCorridorTrafficStudies(record, intersections);
+      if (studies.length === 0) {
+        throw new Error('No se encontraron intersecciones del corredor.');
+      }
+
+      const corridorName = getCorridorName(intersections, studies[0].intersection.id);
+      const nextImport = {
+        corridorName,
+        point: record.point,
+        profile: calculateRoadTrafficProfile(record),
+        studies,
+      };
+
+      setRoadTrafficImport(nextImport);
+      setRoadTrafficImportError(null);
+      persist({ ...state, activeStudy: studies[0].study });
+    } catch (error) {
+      setRoadTrafficImport(null);
+      setRoadTrafficImportError(error instanceof Error ? error.message : 'No se pudo importar el CSV TDPA.');
+    }
   }
 
   function startStudy(intersectionId: string): void {
@@ -160,6 +254,18 @@ export function WizardApp() {
         : fallbackStudy;
 
     persist({ ...state, activeStudy: study });
+  }
+
+  function toggleRelatedIntersection(intersectionId: string): void {
+    const nextRelatedIntersectionIds = relatedIntersectionIds.includes(intersectionId)
+      ? relatedIntersectionIds.filter((id) => id !== intersectionId)
+      : [...relatedIntersectionIds, intersectionId];
+
+    setActiveStudy({
+      ...activeStudy,
+      relatedIntersectionIds: nextRelatedIntersectionIds,
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   function goToStep(index: number): void {
@@ -253,22 +359,11 @@ export function WizardApp() {
           <div className="two-column">
             <section>
               <h2>Seleccionar interseccion</h2>
-              <div className="intersection-list">
-                {intersections.map((intersection) => (
-                  <button
-                    className={intersection.id === activeStudy.intersectionId ? 'intersection selected' : 'intersection'}
-                    key={intersection.id}
-                    onClick={() => startStudy(intersection.id)}
-                    type="button"
-                  >
-                    <strong>{intersection.id}</strong>
-                    <span>{intersection.name}</span>
-                    <small>
-                      {intersection.latitude.toFixed(6)}, {intersection.longitude.toFixed(6)}
-                    </small>
-                  </button>
-                ))}
-              </div>
+              <IntersectionMap
+                intersections={intersections}
+                selectedIntersectionId={activeStudy.intersectionId}
+                onSelect={startStudy}
+              />
             </section>
             <aside className="panel">
               <h3>{selectedIntersection.id}</h3>
@@ -276,6 +371,8 @@ export function WizardApp() {
               <dl>
                 <dt>Municipio</dt>
                 <dd>{selectedIntersection.municipality}</dd>
+                <dt>Localidad</dt>
+                <dd>{selectedIntersection.locality}</dd>
                 <dt>Estado</dt>
                 <dd>{selectedIntersection.verificationStatus === 'verified' ? 'Verificada' : 'Por verificar'}</dd>
                 <dt>Coordenadas</dt>
@@ -283,6 +380,52 @@ export function WizardApp() {
                   {selectedIntersection.latitude}, {selectedIntersection.longitude}
                 </dd>
               </dl>
+              <section className="linked-intersections">
+                <div className="linked-header">
+                  <h4>Intersecciones vinculadas</h4>
+                  <span>{relatedIntersectionIds.length} vinculadas</span>
+                </div>
+                <div className="linked-list">
+                  {linkedIntersectionOptions.map((intersection) => (
+                    <label className="linked-option" key={intersection.id}>
+                      <input
+                        aria-label={`${intersection.id} ${intersection.name}`}
+                        checked={relatedIntersectionIds.includes(intersection.id)}
+                        onChange={() => toggleRelatedIntersection(intersection.id)}
+                        type="checkbox"
+                      />
+                      <span>
+                        <strong>{intersection.id}</strong>
+                        {intersection.name}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </section>
+              <div className="import-panel">
+                <label>
+                  <span className="file-label">
+                    <Upload size={16} />
+                    Importar CSV TDPA
+                  </span>
+                  <input
+                    accept=".csv,text/csv"
+                    type="file"
+                    onChange={(event) => {
+                      void importRoadTrafficCsv(event.target.files);
+                    }}
+                  />
+                </label>
+                <small>
+                  Calcula hora de diseño, composición vehicular y flujo directo para el corredor detectado.
+                </small>
+              </div>
+              {roadTrafficImportError && (
+                <p className="warning">
+                  <AlertTriangle size={16} />
+                  {roadTrafficImportError}
+                </p>
+              )}
             </aside>
           </div>
         )}
@@ -793,6 +936,29 @@ export function WizardApp() {
                 </ResponsiveContainer>
               </article>
             </div>
+            {roadTrafficImport && (
+              <section className="corridor-panel">
+                <div>
+                  <h3>Corredor estimado: {roadTrafficImport.corridorName}</h3>
+                  <p>
+                    Punto generador: {roadTrafficImport.point}. TDPA {roadTrafficImport.profile.dailyTraffic.toLocaleString('es-MX')};
+                    hora de diseño {roadTrafficImport.profile.designHourTotal.toLocaleString('es-MX')} veh/h.
+                  </p>
+                </div>
+                <div className="corridor-actions">
+                  {roadTrafficImport.studies.map((item) => (
+                    <button
+                      className={item.study.intersectionId === activeStudy.intersectionId ? 'secondary selected-action' : 'secondary'}
+                      key={item.intersection.id}
+                      onClick={() => setActiveStudy(item.study)}
+                      type="button"
+                    >
+                      {item.intersection.id}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
           </section>
         )}
 

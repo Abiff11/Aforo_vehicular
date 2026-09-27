@@ -71,6 +71,7 @@ export function createDefaultStudy(intersectionId: string): Study {
       notes: '',
     },
     configurationSnapshot,
+    relatedIntersectionIds: [],
     intervals,
     rows: createEmptyCaptureRows(intervals, configurationSnapshot.accesses),
     status: 'draft',
