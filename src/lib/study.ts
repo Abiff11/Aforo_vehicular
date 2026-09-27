@@ -1,5 +1,6 @@
 import type {
   AccessConfig,
+  CaptureRow,
   IntersectionConfig,
   MovementKey,
   SignalPhaseTiming,
@@ -26,13 +27,13 @@ export function createDefaultPrograms(): SignalProgram[] {
       name: 'P1',
       startTime: '07:00',
       endTime: '09:00',
-      cycleSeconds: 90,
-      phases: 2,
-      greenSeconds: 40,
-      amberSeconds: 3,
-      redSeconds: 47,
+      cycleSeconds: null,
+      phases: null,
+      greenSeconds: null,
+      amberSeconds: null,
+      redSeconds: null,
       clearanceSeconds: null,
-      phaseTimings: createPhaseTimings(2, 90),
+      phaseTimings: [],
       notes: '',
     },
   ];
@@ -44,17 +45,18 @@ function createPhaseTimings(count: number, cycleSeconds: number | null): SignalP
     name: `Fase ${index + 1}`,
     cycleSeconds,
     greenSeconds: null,
-    amberSeconds: 3,
+    amberSeconds: null,
     redSeconds: null,
   }));
 }
 
-export function createDefaultConfiguration(intersectionId: string, inherited = false): IntersectionConfig {
+export function createDefaultConfiguration(intersectionId: string, inherited = true): IntersectionConfig {
   return {
     intersectionId,
     inherited,
     accesses: createDefaultAccesses(),
     programs: createDefaultPrograms(),
+    signalMovementAssignments: [],
     updatedAt: new Date().toISOString(),
   };
 }
@@ -75,11 +77,7 @@ export function createDefaultStudyMetadata(now = new Date().toISOString()): Stud
 export function createDefaultStudy(intersectionId: string, metadata: StudyMetadata = createDefaultStudyMetadata()): Study {
   const configurationSnapshot = createDefaultConfiguration(intersectionId);
   const normalizedMetadata = { ...metadata };
-  const intervals = generateIntervals(
-    normalizedMetadata.startTime,
-    normalizedMetadata.endTime,
-    normalizedMetadata.intervalMinutes,
-  );
+  const intervals = generateIntervals(normalizedMetadata.startTime, normalizedMetadata.endTime, normalizedMetadata.intervalMinutes);
   const now = new Date().toISOString();
 
   return {
@@ -92,20 +90,71 @@ export function createDefaultStudy(intersectionId: string, metadata: StudyMetada
     intervals,
     rows: createEmptyCaptureRows(intervals, configurationSnapshot.accesses),
     status: 'draft',
+    source: 'observed',
+    tdpaEstimate: null,
+    legacyUnverified: false,
     createdAt: now,
     updatedAt: now,
   };
 }
 
-export function rebuildStudyRows(study: Study): Study {
-  const intervals = generateIntervals(study.metadata.startTime, study.metadata.endTime, study.metadata.intervalMinutes);
+export function hasCapturedData(study: Study): boolean {
+  return study.rows.some((row) =>
+    [
+      row.left,
+      row.through,
+      row.right,
+      row.uTurn,
+      row.heavy,
+      row.motorcycles,
+      row.bicycles,
+      row.pedestrians,
+      row.maxQueue,
+      row.averageQueue,
+      row.queueLength,
+      row.stoppedVehiclesPerCycle,
+      row.observedCycle,
+    ].some((value) => value !== null) || row.observedProgram.trim() !== '' || row.notes.trim() !== '',
+  );
+}
 
+function mergeCompatibleRow(emptyRow: CaptureRow, previous: CaptureRow, access: AccessConfig): CaptureRow {
   return {
-    ...study,
-    intervals,
-    rows: createEmptyCaptureRows(intervals, study.configurationSnapshot.accesses),
-    updatedAt: new Date().toISOString(),
+    ...emptyRow,
+    left: access.movements.left ? previous.left : null,
+    through: access.movements.through ? previous.through : null,
+    right: access.movements.right ? previous.right : null,
+    uTurn: access.movements.uTurn ? previous.uTurn : null,
+    heavy: previous.heavy,
+    motorcycles: previous.motorcycles,
+    bicycles: previous.bicycles,
+    pedestrians: previous.pedestrians,
+    maxQueue: previous.maxQueue,
+    averageQueue: previous.averageQueue,
+    queueLength: previous.queueLength,
+    stoppedVehiclesPerCycle: previous.stoppedVehiclesPerCycle,
+    observedCycle: previous.observedCycle,
+    observedProgram: previous.observedProgram,
+    notes: previous.notes,
   };
+}
+
+export function rebuildStudyRowsPreservingCapture(study: Study): Study {
+  const intervals = generateIntervals(study.metadata.startTime, study.metadata.endTime, study.metadata.intervalMinutes);
+  const emptyRows = createEmptyCaptureRows(intervals, study.configurationSnapshot.accesses);
+  const previousById = new Map(study.rows.map((row) => [row.id, row]));
+  const accessById = new Map(study.configurationSnapshot.accesses.map((access) => [access.id, access]));
+  const rows = emptyRows.map((emptyRow) => {
+    const previous = previousById.get(emptyRow.id);
+    const access = accessById.get(emptyRow.accessId);
+    return previous && access ? mergeCompatibleRow(emptyRow, previous, access) : emptyRow;
+  });
+
+  return { ...study, intervals, rows, updatedAt: new Date().toISOString() };
+}
+
+export function rebuildStudyRows(study: Study): Study {
+  return rebuildStudyRowsPreservingCapture(study);
 }
 
 function withUpdatedAt(study: Study): Study {
@@ -113,11 +162,7 @@ function withUpdatedAt(study: Study): Study {
 }
 
 function rebuildRowsWithConfiguration(study: Study): Study {
-  return {
-    ...study,
-    rows: createEmptyCaptureRows(study.intervals, study.configurationSnapshot.accesses),
-    updatedAt: new Date().toISOString(),
-  };
+  return rebuildStudyRowsPreservingCapture(study);
 }
 
 export function updateAccessConfig(study: Study, accessId: string, changes: Partial<Pick<AccessConfig, 'name' | 'lanes'>>): Study {
@@ -150,12 +195,7 @@ export function updateAccessMovement(study: Study, accessId: string, movement: M
       inherited: false,
       updatedAt: new Date().toISOString(),
       accesses: study.configurationSnapshot.accesses.map((access) =>
-        access.id === accessId
-          ? {
-              ...access,
-              movements: { ...access.movements, [movement]: enabled },
-            }
-          : access,
+        access.id === accessId ? { ...access, movements: { ...access.movements, [movement]: enabled } } : access,
       ),
     },
   };
@@ -168,14 +208,10 @@ export function updateProgram(study: Study, programId: string, changes: Partial<
     ...study,
     configurationSnapshot: {
       ...study.configurationSnapshot,
+      inherited: false,
       updatedAt: new Date().toISOString(),
       programs: study.configurationSnapshot.programs.map((program) =>
-        program.id === programId
-          ? {
-              ...program,
-              ...changes,
-            }
-          : program,
+        program.id === programId ? { ...program, ...changes } : program,
       ),
     },
   });
@@ -187,17 +223,13 @@ export function updateProgramPhaseCount(study: Study, programId: string, phaseCo
     ...study,
     configurationSnapshot: {
       ...study.configurationSnapshot,
+      inherited: false,
       updatedAt: new Date().toISOString(),
       programs: study.configurationSnapshot.programs.map((program) => {
-        if (program.id !== programId) {
-          return program;
-        }
-
+        if (program.id !== programId) return program;
         const existing = program.phaseTimings ?? [];
-        const phaseTimings = Array.from({ length: normalizedCount }, (_, index) => {
-          return existing[index] ?? createPhaseTimings(normalizedCount, program.cycleSeconds)[index];
-        });
-
+        const generated = createPhaseTimings(normalizedCount, program.cycleSeconds);
+        const phaseTimings = Array.from({ length: normalizedCount }, (_, index) => existing[index] ?? generated[index]);
         return { ...program, phases: normalizedCount, phaseTimings };
       }),
     },
@@ -214,13 +246,11 @@ export function updateProgramPhase(
     ...study,
     configurationSnapshot: {
       ...study.configurationSnapshot,
+      inherited: false,
       updatedAt: new Date().toISOString(),
       programs: study.configurationSnapshot.programs.map((program) =>
         program.id === programId
-          ? {
-              ...program,
-              phaseTimings: program.phaseTimings.map((phase) => (phase.id === phaseId ? { ...phase, ...changes } : phase)),
-            }
+          ? { ...program, phaseTimings: program.phaseTimings.map((phase) => (phase.id === phaseId ? { ...phase, ...changes } : phase)) }
           : program,
       ),
     },
