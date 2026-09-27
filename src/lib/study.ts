@@ -3,6 +3,7 @@ import type {
   CaptureRow,
   IntersectionConfig,
   MovementKey,
+  SignalMovementAssignment,
   SignalPhaseTiming,
   SignalProgram,
   Study,
@@ -253,6 +254,74 @@ export function updateProgramPhase(
           ? { ...program, phaseTimings: program.phaseTimings.map((phase) => (phase.id === phaseId ? { ...phase, ...changes } : phase)) }
           : program,
       ),
+    },
+  });
+}
+
+export function addSignalMovementAssignment(study: Study): Study {
+  const existing = study.configurationSnapshot.signalMovementAssignments ?? [];
+  const access = study.configurationSnapshot.accesses[0];
+  const program = study.configurationSnapshot.programs[0];
+  const phase = program?.phaseTimings[0];
+  if (!access || !program || !phase) return study;
+
+  const nextNumber = existing.reduce((maximum, assignment) => {
+    const match = assignment.id.match(/signal-group-(\d+)$/);
+    return match ? Math.max(maximum, Number(match[1])) : maximum;
+  }, 0) + 1;
+  const preferredMovement: MovementKey = access.movements.through
+    ? 'through'
+    : (Object.entries(access.movements).find(([, enabled]) => enabled)?.[0] as MovementKey | undefined) ?? 'through';
+  const assignment: SignalMovementAssignment = {
+    id: `signal-group-${nextNumber}`,
+    accessId: access.id,
+    movement: preferredMovement,
+    programId: program.id,
+    phaseId: phase.id,
+    lanes: null,
+    saturationFlowPerLane: null,
+    effectiveGreenSeconds: null,
+  };
+
+  return withUpdatedAt({
+    ...study,
+    configurationSnapshot: {
+      ...study.configurationSnapshot,
+      inherited: false,
+      updatedAt: new Date().toISOString(),
+      signalMovementAssignments: [...existing, assignment],
+    },
+  });
+}
+
+export function updateSignalMovementAssignment(
+  study: Study,
+  assignmentId: string,
+  changes: Partial<Omit<SignalMovementAssignment, 'id'>>,
+): Study {
+  const assignments = study.configurationSnapshot.signalMovementAssignments ?? [];
+  return withUpdatedAt({
+    ...study,
+    configurationSnapshot: {
+      ...study.configurationSnapshot,
+      inherited: false,
+      updatedAt: new Date().toISOString(),
+      signalMovementAssignments: assignments.map((assignment) =>
+        assignment.id === assignmentId ? { ...assignment, ...changes } : assignment,
+      ),
+    },
+  });
+}
+
+export function removeSignalMovementAssignment(study: Study, assignmentId: string): Study {
+  const assignments = study.configurationSnapshot.signalMovementAssignments ?? [];
+  return withUpdatedAt({
+    ...study,
+    configurationSnapshot: {
+      ...study.configurationSnapshot,
+      inherited: false,
+      updatedAt: new Date().toISOString(),
+      signalMovementAssignments: assignments.filter((assignment) => assignment.id !== assignmentId),
     },
   });
 }
