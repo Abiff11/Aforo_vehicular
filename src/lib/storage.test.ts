@@ -40,8 +40,8 @@ describe('local storage persistence', () => {
     });
   });
 
-  it('upgrades an older payload without discarding its existing active study', () => {
-    const activeStudy = createDefaultStudy('INT-009');
+  it('upgrades an older payload and remaps its wizard position without discarding the study', () => {
+    const activeStudy = { ...createDefaultStudy('INT-009'), currentStep: 3 };
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
@@ -57,8 +57,11 @@ describe('local storage persistence', () => {
 
     const loaded = loadStoredState();
 
-    expect(loaded.activeStudy?.intersectionId).toBe('INT-009');
+    expect(loaded.activeStudy).toMatchObject({ intersectionId: 'INT-009', currentStep: 0 });
     expect(loaded.studyTemplate).toMatchObject({ intervalMinutes: 15, startTime: '07:00' });
-    expect(loaded.studiesByIntersection).toEqual({ 'INT-009': activeStudy });
+    expect(loaded.studiesByIntersection?.['INT-009']).toMatchObject({
+      intersectionId: 'INT-009',
+      currentStep: 0,
+    });
   });
 });
