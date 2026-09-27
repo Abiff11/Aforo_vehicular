@@ -6,7 +6,9 @@ import {
   CheckCircle2,
   CircleHelp,
   Download,
+  Eraser,
   Save,
+  Trash2,
   Upload,
   X,
 } from 'lucide-react';
@@ -20,6 +22,7 @@ import {
 } from '../lib/roadTrafficImport';
 import {
   createDefaultStudy,
+  createDefaultStudyMetadata,
   rebuildStudyRows,
   updateAccessConfig,
   updateAccessMovement,
@@ -27,10 +30,11 @@ import {
   updateProgramPhase,
   updateProgramPhaseCount,
 } from '../lib/study';
-import { createInitialState, loadStoredState, saveStoredState } from '../lib/storage';
+import { createInitialState, loadStoredState, saveStoredState, STORAGE_KEY } from '../lib/storage';
 import type { CorridorTrafficStudy, RoadTrafficProfile } from '../lib/roadTrafficImport';
-import type { CaptureRow, Intersection, MovementKey, StoredState, Study } from '../lib/types';
+import type { CaptureRow, Intersection, MovementKey, StoredState, Study, StudyMetadata } from '../lib/types';
 import { IntersectionMap } from './IntersectionMap';
+import { ResultsDashboard } from './ResultsDashboard';
 
 const movementLabels: Record<MovementKey, string> = {
   left: 'Izq',
@@ -40,7 +44,6 @@ const movementLabels: Record<MovementKey, string> = {
 };
 
 const UNASSIGNED_INTERSECTION_ID = '__UNASSIGNED__';
-const numberFormat = new Intl.NumberFormat('es-MX');
 
 interface RoadTrafficImportState {
   fileName: string;
@@ -83,26 +86,22 @@ function updateStudyRow(study: Study, rowId: string, field: keyof CaptureRow, ra
   };
 }
 
-function updateStudyMetadata(
-  study: Study,
-  field: keyof Study['metadata'],
-  value: string | number | null,
-): Study {
+function applyStudyMetadata(study: Study, metadata: StudyMetadata, rebuildRows: boolean): Study {
   const next: Study = {
     ...study,
-    metadata: { ...study.metadata, [field]: value },
+    metadata: { ...metadata },
     updatedAt: new Date().toISOString(),
   };
 
-  if (['startTime', 'endTime', 'intervalMinutes'].includes(field)) {
-    try {
-      return rebuildStudyRows(next);
-    } catch {
-      return next;
-    }
+  if (!rebuildRows) {
+    return next;
   }
 
-  return next;
+  try {
+    return rebuildStudyRows(next);
+  } catch {
+    return next;
+  }
 }
 
 function readFileText(file: File): Promise<string> {
@@ -120,14 +119,6 @@ function readFileText(file: File): Promise<string> {
 
 function parseOptionalNumber(value: string): number | null {
   return value === '' ? null : Number(value);
-}
-
-function formatNullable(value: number | null, digits = 0): string {
-  if (value === null || !Number.isFinite(value)) return 'N/D';
-  return value.toLocaleString('es-MX', {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
 }
 
 function createIntersection(latitude: number, longitude: number, existing: Intersection[]): Intersection {
@@ -149,18 +140,23 @@ function createIntersection(latitude: number, longitude: number, existing: Inter
   };
 }
 
+function isAssignedStudy(study: Study): boolean {
+  return !study.intersectionId.startsWith('__');
+}
+
 export function WizardApp() {
   const [state, setState] = useState<StoredState>(getInitialState);
   const [helpStepIndex, setHelpStepIndex] = useState<number | null>(null);
   const [roadTrafficImport, setRoadTrafficImport] = useState<RoadTrafficImportState | null>(null);
   const [roadTrafficImportError, setRoadTrafficImportError] = useState<string | null>(null);
 
-  const customIntersections = state.customIntersections ?? [];
-  const persistedStudy =
-    state.activeStudy && customIntersections.some((intersection) => intersection.id === state.activeStudy?.intersectionId)
-      ? state.activeStudy
-      : null;
-  const activeStudy = persistedStudy ?? createDefaultStudy(UNASSIGNED_INTERSECTION_ID);
+  const customIntersections = useMemo(() => state.customIntersections ?? [], [state.customIntersections]);
+  const studiesByIntersection = useMemo(() => state.studiesByIntersection ?? {}, [state.studiesByIntersection]);
+  const studyTemplate = useMemo(
+    () => state.studyTemplate ?? createDefaultStudyMetadata(),
+    [state.studyTemplate],
+  );
+  const activeStudy = state.activeStudy ?? createDefaultStudy(UNASSIGNED_INTERSECTION_ID, studyTemplate);
   const selectedIntersection =
     customIntersections.find((intersection) => intersection.id === activeStudy.intersectionId) ?? null;
   const activeHelp = helpStepIndex === null ? null : wizardSteps[helpStepIndex];
@@ -194,12 +190,53 @@ export function WizardApp() {
   }
 
   function setActiveStudy(study: Study): void {
-    persist({ ...state, activeStudy: study });
+    const nextStudies = { ...studiesByIntersection };
+    if (isAssignedStudy(study)) {
+      nextStudies[study.intersectionId] = study;
+    }
+
+    persist({ ...state, activeStudy: study, studiesByIntersection: nextStudies });
+  }
+
+  function updateSharedMetadata(
+    field: keyof StudyMetadata,
+    value: string | number | null,
+  ): void {
+    const nextTemplate = { ...studyTemplate, [field]: value } as StudyMetadata;
+    const rebuildRows = ['startTime', 'endTime', 'intervalMinutes'].includes(field);
+    const nextStudies = Object.fromEntries(
+      Object.entries(studiesByIntersection).map(([intersectionId, study]) => [
+        intersectionId,
+        applyStudyMetadata(study, nextTemplate, rebuildRows),
+      ]),
+    );
+    const nextActiveStudy = isAssignedStudy(activeStudy)
+      ? (nextStudies[activeStudy.intersectionId] ?? applyStudyMetadata(activeStudy, nextTemplate, rebuildRows))
+      : applyStudyMetadata(activeStudy, nextTemplate, rebuildRows);
+
+    persist({
+      ...state,
+      studyTemplate: nextTemplate,
+      studiesByIntersection: nextStudies,
+      activeStudy: nextActiveStudy,
+      preferences: { ...state.preferences, intervalMinutes: nextTemplate.intervalMinutes },
+    });
   }
 
   function buildStudyForIntersection(intersection: Intersection): Study {
+    const storedStudy = studiesByIntersection[intersection.id];
+    if (storedStudy) {
+      return {
+        ...storedStudy,
+        currentStep: 1,
+        metadata: { ...studyTemplate },
+        relatedIntersectionIds: intersection.relatedIntersectionIds ?? storedStudy.relatedIntersectionIds,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
     const existingConfig = state.intersectionConfigs[intersection.id];
-    const fallbackStudy = createDefaultStudy(intersection.id);
+    const fallbackStudy = createDefaultStudy(intersection.id, studyTemplate);
     const configuredStudy = existingConfig
       ? { ...fallbackStudy, configurationSnapshot: existingConfig }
       : state.lastConfiguration
@@ -214,8 +251,10 @@ export function WizardApp() {
           }
         : fallbackStudy;
 
+    const alignedStudy = rebuildStudyRows(configuredStudy);
     return {
-      ...configuredStudy,
+      ...alignedStudy,
+      currentStep: 1,
       relatedIntersectionIds: intersection.relatedIntersectionIds ?? [],
     };
   }
@@ -227,20 +266,30 @@ export function WizardApp() {
 
     setRoadTrafficImport(null);
     setRoadTrafficImportError(null);
-    persist({ ...state, customIntersections: nextIntersections, activeStudy: study });
+    persist({
+      ...state,
+      customIntersections: nextIntersections,
+      activeStudy: study,
+      studiesByIntersection: { ...studiesByIntersection, [intersection.id]: study },
+    });
   }
 
   function startStudy(intersectionId: string): void {
     const intersection = customIntersections.find((candidate) => candidate.id === intersectionId);
     if (!intersection) return;
 
-    if (persistedStudy?.intersectionId === intersectionId) {
+    if (selectedIntersection?.id === intersectionId) {
       return;
     }
 
+    const study = buildStudyForIntersection(intersection);
     setRoadTrafficImport(null);
     setRoadTrafficImportError(null);
-    persist({ ...state, activeStudy: buildStudyForIntersection(intersection) });
+    persist({
+      ...state,
+      activeStudy: study,
+      studiesByIntersection: { ...studiesByIntersection, [intersection.id]: study },
+    });
   }
 
   function updateIntersection(changes: Partial<Omit<Intersection, 'id' | 'mapNumber'>>): void {
@@ -249,7 +298,7 @@ export function WizardApp() {
     const nextIntersections = customIntersections.map((intersection) =>
       intersection.id === selectedIntersection.id ? { ...intersection, ...changes } : intersection,
     );
-    persist({ ...state, customIntersections: nextIntersections, activeStudy: activeStudy });
+    persist({ ...state, customIntersections: nextIntersections, activeStudy });
   }
 
   function renameIntersection(rawId: string): void {
@@ -259,10 +308,11 @@ export function WizardApp() {
     if (customIntersections.some((intersection) => intersection.id === nextId)) return;
 
     const oldId = selectedIntersection.id;
+    const remapRelated = (ids: string[]) => ids.map((id) => (id === oldId ? nextId : id));
     const nextIntersections = customIntersections.map((intersection) => ({
       ...intersection,
       id: intersection.id === oldId ? nextId : intersection.id,
-      relatedIntersectionIds: (intersection.relatedIntersectionIds ?? []).map((id) => (id === oldId ? nextId : id)),
+      relatedIntersectionIds: remapRelated(intersection.relatedIntersectionIds ?? []),
     }));
 
     const existingConfig = state.intersectionConfigs[oldId];
@@ -272,18 +322,35 @@ export function WizardApp() {
       nextConfigs[nextId] = { ...existingConfig, intersectionId: nextId };
     }
 
-    const nextStudy: Study = {
+    const nextStudies: Record<string, Study> = {};
+    for (const [intersectionId, study] of Object.entries(studiesByIntersection)) {
+      const renamed = intersectionId === oldId;
+      const nextStudyId = renamed ? nextId : intersectionId;
+      nextStudies[nextStudyId] = {
+        ...study,
+        intersectionId: renamed ? nextId : study.intersectionId,
+        relatedIntersectionIds: remapRelated(study.relatedIntersectionIds),
+        configurationSnapshot: renamed
+          ? { ...study.configurationSnapshot, intersectionId: nextId }
+          : study.configurationSnapshot,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    const nextStudy = nextStudies[nextId] ?? {
       ...activeStudy,
       intersectionId: nextId,
-      relatedIntersectionIds: activeStudy.relatedIntersectionIds.map((id) => (id === oldId ? nextId : id)),
+      relatedIntersectionIds: remapRelated(activeStudy.relatedIntersectionIds),
       configurationSnapshot: { ...activeStudy.configurationSnapshot, intersectionId: nextId },
       updatedAt: new Date().toISOString(),
     };
+    nextStudies[nextId] = nextStudy;
 
     persist({
       ...state,
       customIntersections: nextIntersections,
       intersectionConfigs: nextConfigs,
+      studiesByIntersection: nextStudies,
       activeStudy: nextStudy,
       lastConfiguration:
         state.lastConfiguration?.intersectionId === oldId
@@ -309,7 +376,12 @@ export function WizardApp() {
       updatedAt: new Date().toISOString(),
     };
 
-    persist({ ...state, customIntersections: nextIntersections, activeStudy: nextStudy });
+    persist({
+      ...state,
+      customIntersections: nextIntersections,
+      activeStudy: nextStudy,
+      studiesByIntersection: { ...studiesByIntersection, [nextStudy.intersectionId]: nextStudy },
+    });
   }
 
   async function importRoadTrafficCsv(files: FileList | null): Promise<void> {
@@ -334,7 +406,12 @@ export function WizardApp() {
         studies: [imported],
       });
       setRoadTrafficImportError(null);
-      persist({ ...state, customIntersections: nextIntersections, activeStudy: imported.study });
+      persist({
+        ...state,
+        customIntersections: nextIntersections,
+        activeStudy: imported.study,
+        studiesByIntersection: { ...studiesByIntersection, [linkedIntersection.id]: imported.study },
+      });
     } catch (error) {
       setRoadTrafficImport(null);
       setRoadTrafficImportError(error instanceof Error ? error.message : 'No se pudo importar el CSV TDPA.');
@@ -342,25 +419,73 @@ export function WizardApp() {
   }
 
   function goToStep(index: number): void {
-    if (!selectedIntersection && index > 0) return;
+    if (!selectedIntersection && index > 1) return;
     setActiveStudy({ ...activeStudy, currentStep: Math.max(0, Math.min(index, wizardSteps.length - 1)) });
   }
 
   function saveConfiguration(): void {
     if (!selectedIntersection) return;
     const config = { ...activeStudy.configurationSnapshot, inherited: false, updatedAt: new Date().toISOString() };
+    const nextStudy = { ...activeStudy, configurationSnapshot: config };
     persist({
       ...state,
       lastConfiguration: config,
       intersectionConfigs: { ...state.intersectionConfigs, [activeStudy.intersectionId]: config },
-      activeStudy: { ...activeStudy, configurationSnapshot: config },
+      activeStudy: nextStudy,
+      studiesByIntersection: { ...studiesByIntersection, [nextStudy.intersectionId]: nextStudy },
     });
+  }
+
+  function clearActiveIntersection(): void {
+    if (!selectedIntersection) return;
+    if (!window.confirm('¿Limpiar los campos y datos de esta intersección desde este paso en adelante?')) return;
+
+    const clearedIntersection: Intersection = {
+      ...selectedIntersection,
+      name: '',
+      municipality: '',
+      locality: '',
+      notes: '',
+      linkedCsvFileName: undefined,
+      relatedIntersectionIds: [],
+      verificationStatus: 'pending',
+    };
+    const nextIntersections = customIntersections.map((intersection) =>
+      intersection.id === selectedIntersection.id ? clearedIntersection : intersection,
+    );
+    const nextConfigs = { ...state.intersectionConfigs };
+    delete nextConfigs[selectedIntersection.id];
+    const freshStudy = {
+      ...createDefaultStudy(selectedIntersection.id, studyTemplate),
+      currentStep: 1,
+    };
+
+    setRoadTrafficImport(null);
+    setRoadTrafficImportError(null);
+    persist({
+      ...state,
+      customIntersections: nextIntersections,
+      intersectionConfigs: nextConfigs,
+      activeStudy: freshStudy,
+      studiesByIntersection: { ...studiesByIntersection, [selectedIntersection.id]: freshStudy },
+    });
+  }
+
+  function clearEntireStudy(): void {
+    if (!window.confirm('¿Borrar todo el estudio, todas las intersecciones y toda la memoria guardada?')) return;
+
+    localStorage.removeItem(STORAGE_KEY);
+    setRoadTrafficImport(null);
+    setRoadTrafficImportError(null);
+    setHelpStepIndex(null);
+    setState(createInitialState());
   }
 
   function exportExcel(): void {
     if (!selectedIntersection) return;
     downloadStudyWorkbook(activeStudy, selectedIntersection);
-    setActiveStudy({ ...activeStudy, status: 'exported' });
+    const nextStudy = { ...activeStudy, status: 'exported' as const };
+    setActiveStudy(nextStudy);
   }
 
   return (
@@ -434,6 +559,62 @@ export function WizardApp() {
 
       <section className="workspace">
         {activeStudy.currentStep === 0 && (
+          <section>
+            <div className="section-heading">
+              <div>
+                <h2>Datos del estudio</h2>
+                <p className="section-description">Estos datos se guardan como memoria común y se reutilizan en todas las intersecciones del estudio.</p>
+              </div>
+              <button className="danger-button" onClick={clearEntireStudy} type="button">
+                <Trash2 size={16} />
+                Limpiar estudio
+              </button>
+            </div>
+            <div className="panel form-grid study-form">
+              <label>
+                Fecha
+                <input type="date" value={studyTemplate.date} onChange={(event) => updateSharedMetadata('date', event.target.value)} />
+              </label>
+              <label>
+                Hora inicio
+                <input type="time" value={studyTemplate.startTime} onChange={(event) => updateSharedMetadata('startTime', event.target.value)} />
+              </label>
+              <label>
+                Hora termino
+                <input type="time" value={studyTemplate.endTime} onChange={(event) => updateSharedMetadata('endTime', event.target.value)} />
+              </label>
+              <label>
+                Intervalo (min)
+                <select value={studyTemplate.intervalMinutes} onChange={(event) => updateSharedMetadata('intervalMinutes', Number(event.target.value))}>
+                  {[5, 10, 15, 20, 30].map((minutes) => <option key={minutes} value={minutes}>{minutes}</option>)}
+                </select>
+              </label>
+              <label>
+                Aforador
+                <input value={studyTemplate.surveyor} onChange={(event) => updateSharedMetadata('surveyor', event.target.value)} />
+              </label>
+              <label>
+                Clima
+                <input value={studyTemplate.weather} onChange={(event) => updateSharedMetadata('weather', event.target.value)} />
+              </label>
+              <label>
+                Flujo de saturación observado (veh/h/carril)
+                <input
+                  min={0}
+                  type="number"
+                  value={studyTemplate.observedSaturationFlowPerLane ?? ''}
+                  onChange={(event) => updateSharedMetadata('observedSaturationFlowPerLane', parseOptionalNumber(event.target.value))}
+                />
+              </label>
+              <label>
+                Observaciones generales
+                <input value={studyTemplate.notes} onChange={(event) => updateSharedMetadata('notes', event.target.value)} />
+              </label>
+            </div>
+          </section>
+        )}
+
+        {activeStudy.currentStep === 1 && (
           <div className="two-column">
             <section>
               <h2>Intersecciones de trabajo</h2>
@@ -454,7 +635,13 @@ export function WizardApp() {
                 </>
               ) : (
                 <>
-                  <h3>{selectedIntersection.id}</h3>
+                  <div className="intersection-card-heading">
+                    <h3>{selectedIntersection.id}</h3>
+                    <button className="danger-secondary" onClick={clearActiveIntersection} type="button">
+                      <Eraser size={15} />
+                      Limpiar campos
+                    </button>
+                  </div>
                   <label>
                     Clave de interseccion
                     <input
@@ -555,7 +742,7 @@ export function WizardApp() {
           </div>
         )}
 
-        {activeStudy.currentStep === 1 && (
+        {activeStudy.currentStep === 2 && (
           <section>
             <div className="section-heading">
               <h2>Configuracion de accesos</h2>
@@ -614,7 +801,7 @@ export function WizardApp() {
           </section>
         )}
 
-        {activeStudy.currentStep === 2 && (
+        {activeStudy.currentStep === 3 && (
           <section>
             <h2>Programacion semaforica</h2>
             {activeStudy.configurationSnapshot.programs.map((program) => (
@@ -680,53 +867,6 @@ export function WizardApp() {
                 </div>
               </article>
             ))}
-          </section>
-        )}
-
-        {activeStudy.currentStep === 3 && (
-          <section>
-            <h2>Datos del estudio</h2>
-            <div className="panel form-grid">
-              <label>
-                Fecha
-                <input type="date" value={activeStudy.metadata.date} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'date', event.target.value))} />
-              </label>
-              <label>
-                Hora inicio
-                <input type="time" value={activeStudy.metadata.startTime} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'startTime', event.target.value))} />
-              </label>
-              <label>
-                Hora termino
-                <input type="time" value={activeStudy.metadata.endTime} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'endTime', event.target.value))} />
-              </label>
-              <label>
-                Intervalo (min)
-                <select value={activeStudy.metadata.intervalMinutes} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'intervalMinutes', Number(event.target.value)))}>
-                  {[5, 10, 15, 20, 30].map((minutes) => <option key={minutes} value={minutes}>{minutes}</option>)}
-                </select>
-              </label>
-              <label>
-                Aforador
-                <input value={activeStudy.metadata.surveyor} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'surveyor', event.target.value))} />
-              </label>
-              <label>
-                Clima
-                <input value={activeStudy.metadata.weather} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'weather', event.target.value))} />
-              </label>
-              <label>
-                Flujo de saturación observado (veh/h/carril)
-                <input
-                  min={0}
-                  type="number"
-                  value={activeStudy.metadata.observedSaturationFlowPerLane ?? ''}
-                  onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'observedSaturationFlowPerLane', parseOptionalNumber(event.target.value)))}
-                />
-              </label>
-              <label>
-                Observaciones generales
-                <input value={activeStudy.metadata.notes} onChange={(event) => setActiveStudy(updateStudyMetadata(activeStudy, 'notes', event.target.value))} />
-              </label>
-            </div>
           </section>
         )}
 
@@ -809,41 +949,12 @@ export function WizardApp() {
           <section>
             <h2>Resultados</h2>
             {roadTrafficImport && (
-              <div className="panel">
+              <div className="panel import-result-panel">
                 <strong>{roadTrafficImport.point}</strong>
                 <p>CSV TDPA aplicado exclusivamente a {roadTrafficImport.corridorName}.</p>
               </div>
             )}
-            <div className="summary-grid">
-              <article className="kpi"><span>Volumen total</span><strong>{numberFormat.format(summary.totalMotorized)}</strong></article>
-              <article className="kpi"><span>Intervalo máximo</span><strong>{summary.peakInterval ? `${summary.peakInterval.label} · ${numberFormat.format(summary.peakInterval.volume)}` : 'N/D'}</strong></article>
-              <article className="kpi"><span>Hora de máxima demanda</span><strong>{summary.peakHour ? `${summary.peakHour.label} · ${numberFormat.format(summary.peakHour.volume)}` : 'N/D'}</strong></article>
-              <article className="kpi"><span>{summary.peakHour?.factorLabel ?? 'FHP'}</span><strong>{summary.peakHour?.factor === null || summary.peakHour?.factor === undefined ? 'N/D' : summary.peakHour.factor.toFixed(3)}</strong></article>
-              <article className="kpi"><span>Promedio 15 min</span><strong>{formatNullable(summary.averageIntervalVolume, 1)}</strong></article>
-              <article className="kpi"><span>g/C</span><strong>{formatNullable(summary.signalIndicators.greenRatio, 3)}</strong></article>
-              <article className="kpi"><span>v/c</span><strong>{formatNullable(summary.signalIndicators.volumeCapacityRatio, 3)}</strong></article>
-              <article className="kpi"><span>Pesados</span><strong>{numberFormat.format(summary.totalHeavy)}</strong></article>
-              <article className="kpi"><span>Motos</span><strong>{numberFormat.format(summary.totalMotorcycles)}</strong></article>
-              <article className="kpi"><span>Bicicletas</span><strong>{numberFormat.format(summary.totalBicycles)}</strong></article>
-              <article className="kpi"><span>Peatones</span><strong>{numberFormat.format(summary.totalPedestrians)}</strong></article>
-            </div>
-
-            <div className="two-column">
-              <section className="panel">
-                <h3>Volumen por intervalo</h3>
-                <table>
-                  <thead><tr><th>Intervalo</th><th>Volumen</th></tr></thead>
-                  <tbody>{summary.byInterval.map((interval) => <tr key={interval.intervalId}><td>{interval.label}</td><td>{numberFormat.format(interval.total)}</td></tr>)}</tbody>
-                </table>
-              </section>
-              <section className="panel">
-                <h3>Volumen por acceso</h3>
-                <table>
-                  <thead><tr><th>Acceso</th><th>Volumen</th></tr></thead>
-                  <tbody>{summary.byAccess.map((access) => <tr key={access.accessId}><td>{access.accessName}</td><td>{numberFormat.format(access.volume)}</td></tr>)}</tbody>
-                </table>
-              </section>
-            </div>
+            <ResultsDashboard summary={summary} intervalMinutes={activeStudy.metadata.intervalMinutes} />
           </section>
         )}
 
@@ -864,8 +975,15 @@ export function WizardApp() {
           <ArrowLeft size={16} />
           Anterior
         </button>
-        <span>{selectedIntersection ? `${selectedIntersection.id} · ${selectedIntersection.name}` : 'Sin interseccion seleccionada'}</span>
-        <button disabled={!selectedIntersection || activeStudy.currentStep === wizardSteps.length - 1} onClick={() => goToStep(activeStudy.currentStep + 1)} type="button">
+        <span>{selectedIntersection ? `${selectedIntersection.id} · ${selectedIntersection.name || 'Sin nombre'}` : 'Datos generales del estudio'}</span>
+        <button
+          disabled={
+            activeStudy.currentStep === wizardSteps.length - 1 ||
+            (activeStudy.currentStep >= 1 && !selectedIntersection)
+          }
+          onClick={() => goToStep(activeStudy.currentStep + 1)}
+          type="button"
+        >
           Siguiente
           <ArrowRight size={16} />
         </button>
