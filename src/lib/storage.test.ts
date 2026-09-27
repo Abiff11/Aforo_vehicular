@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createDefaultStudy } from './study';
+import { createDefaultStudy, updateProgram } from './study';
 import { createInitialState, loadStoredState, saveStoredState, STORAGE_KEY } from './storage';
 
 describe('local storage persistence', () => {
@@ -20,7 +20,7 @@ describe('local storage persistence', () => {
     expect(state.studiesByIntersection).toEqual({});
   });
 
-  it('round-trips active study state and studies by intersection with a schema version', () => {
+  it('round-trips current state with schema version 2', () => {
     const study = createDefaultStudy('INT-001');
     const state = {
       ...createInitialState(),
@@ -31,17 +31,48 @@ describe('local storage persistence', () => {
     saveStoredState(state);
 
     expect(loadStoredState()).toMatchObject({
-      schemaVersion: 1,
-      activeStudy: { intersectionId: 'INT-001', currentStep: 0, status: 'draft' },
+      schemaVersion: 2,
+      activeStudy: {
+        intersectionId: 'INT-001',
+        currentStep: 0,
+        status: 'draft',
+        source: 'observed',
+        legacyUnverified: false,
+      },
       studiesByIntersection: {
-        'INT-001': { intersectionId: 'INT-001', status: 'draft' },
+        'INT-001': { intersectionId: 'INT-001', status: 'draft', source: 'observed' },
       },
       preferences: { intervalMinutes: 15 },
     });
   });
 
-  it('upgrades an older payload and remaps its wizard position without discarding the study', () => {
-    const activeStudy = { ...createDefaultStudy('INT-009'), currentStep: 3 };
+  it('migrates schema 1 non-destructively and marks historical zero rows as unverified', () => {
+    let activeStudy = { ...createDefaultStudy('INT-009'), currentStep: 3 };
+    activeStudy = updateProgram(activeStudy, 'p1', { cycleSeconds: 90, greenSeconds: 40, amberSeconds: 3, redSeconds: 47 });
+    activeStudy = {
+      ...activeStudy,
+      rows: activeStudy.rows.map((row) => ({
+        ...row,
+        left: row.left ?? 0,
+        through: row.through ?? 0,
+        right: row.right ?? 0,
+        heavy: row.heavy ?? 0,
+        motorcycles: row.motorcycles ?? 0,
+        bicycles: row.bicycles ?? 0,
+        pedestrians: row.pedestrians ?? 0,
+      })),
+    };
+    const legacy = {
+      ...activeStudy,
+      source: undefined,
+      tdpaEstimate: undefined,
+      legacyUnverified: undefined,
+      configurationSnapshot: {
+        ...activeStudy.configurationSnapshot,
+        signalMovementAssignments: undefined,
+      },
+    };
+
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
@@ -50,18 +81,28 @@ describe('local storage persistence', () => {
         customIntersections: [],
         intersectionConfigs: {},
         lastConfiguration: null,
-        activeStudy,
+        activeStudy: legacy,
         preferences: { intervalMinutes: 15 },
       }),
     );
 
     const loaded = loadStoredState();
 
-    expect(loaded.activeStudy).toMatchObject({ intersectionId: 'INT-009', currentStep: 0 });
+    expect(loaded.schemaVersion).toBe(2);
+    expect(loaded.activeStudy).toMatchObject({
+      intersectionId: 'INT-009',
+      currentStep: 0,
+      source: 'observed',
+      legacyUnverified: true,
+    });
+    expect(loaded.activeStudy?.rows[0]).toMatchObject({ left: 0, through: 0, right: 0 });
+    expect(loaded.activeStudy?.configurationSnapshot.programs[0].greenSeconds).toBe(40);
+    expect(loaded.activeStudy?.configurationSnapshot.signalMovementAssignments).toEqual([]);
     expect(loaded.studyTemplate).toMatchObject({ intervalMinutes: 15, startTime: '07:00' });
     expect(loaded.studiesByIntersection?.['INT-009']).toMatchObject({
       intersectionId: 'INT-009',
       currentStep: 0,
+      legacyUnverified: true,
     });
   });
 });
