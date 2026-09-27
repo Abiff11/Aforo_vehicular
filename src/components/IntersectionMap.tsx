@@ -10,7 +10,7 @@ interface IntersectionMapProps {
   intersections: Intersection[];
   selectedIntersectionId: string | null;
   onSelect: Dispatch<string>;
-  onCreate: (latitude: number, longitude: number) => void;
+  onCreate: Dispatch<[number, number]>;
 }
 
 function createMarkerIcon(intersection: Intersection, selected: boolean): L.DivIcon {
@@ -55,7 +55,7 @@ export function IntersectionMap({ intersections, selectedIntersectionId, onSelec
     mapRef.current = map;
 
     const createAtPoint = (event: L.LeafletMouseEvent) => {
-      onCreateRef.current(event.latlng.lat, event.latlng.lng);
+      onCreateRef.current([event.latlng.lat, event.latlng.lng]);
     };
     map.on('click', createAtPoint);
 
@@ -111,10 +111,10 @@ export function IntersectionMap({ intersections, selectedIntersectionId, onSelec
 
   function createAtCenter(): void {
     const center = mapRef.current?.getCenter();
-    onCreate(
+    onCreate([
       center?.lat ?? OAXACA_CENTER_POINT.latitude,
       center?.lng ?? OAXACA_CENTER_POINT.longitude,
-    );
+    ]);
   }
 
   return (
