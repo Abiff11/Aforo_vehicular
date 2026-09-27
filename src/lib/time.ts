@@ -25,19 +25,27 @@ function formatTime(totalMinutes: number): string {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
+export function minutesFromClock(value: string): number {
+  return parseTime(value);
+}
+
 export function generateIntervals(startTime: string, endTime: string, intervalMinutes: number): IntervalBlock[] {
   const start = parseTime(startTime);
-  const end = parseTime(endTime);
-
-  if (end <= start) {
-    throw new Error('La hora de termino debe ser posterior a la hora de inicio.');
-  }
+  let end = parseTime(endTime);
 
   if (!Number.isInteger(intervalMinutes) || intervalMinutes <= 0) {
     throw new Error('El intervalo debe ser un numero entero mayor a cero.');
   }
 
+  if (end <= start) {
+    end += MINUTES_PER_DAY;
+  }
+
   const duration = end - start;
+  if (duration > MINUTES_PER_DAY) {
+    throw new Error('La duracion del estudio no puede exceder 24 horas.');
+  }
+
   if (duration % intervalMinutes !== 0) {
     throw new Error(`La duracion del estudio no puede dividirse exactamente en intervalos de ${intervalMinutes} minutos.`);
   }
@@ -55,4 +63,9 @@ export function generateIntervals(startTime: string, endTime: string, intervalMi
 
 export function isOneHourCompatible(intervalMinutes: number): boolean {
   return Number.isInteger(intervalMinutes) && intervalMinutes > 0 && 60 % intervalMinutes === 0;
+}
+
+export function intervalsAreConsecutive(intervals: Array<Pick<IntervalBlock, 'start' | 'end'>>): boolean {
+  if (intervals.length <= 1) return true;
+  return intervals.every((interval, index) => index === 0 || intervals[index - 1].end === interval.start);
 }
