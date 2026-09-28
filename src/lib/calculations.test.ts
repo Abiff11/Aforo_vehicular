@@ -73,6 +73,15 @@ describe('capture calculations', () => {
     expect(calculateRowMotorizedTotal(row(intervals[0], { left: 12, through: 87, right: 19, uTurn: null }), access)).toBe(118);
   });
 
+  it('excludes disabled N/A movements from interval and movement aggregates even if legacy data contains a value', () => {
+    const summary = calculateStudySummary([row(intervals[0], { uTurn: 99 })], [access], 15);
+
+    expect(summary.totalMotorized).toBe(0);
+    expect(summary.byInterval[0].uTurn).toBe(0);
+    expect(summary.byMovement.find((item) => item.movement === 'Retorno')?.volume).toBe(0);
+    expect(summary.errorRows).toBe(1);
+  });
+
   it('detects classification counts greater than the motorized total', () => {
     const issues = validateCaptureRow(row(intervals[0], { left: 1, through: 1, right: 0, heavy: 2, motorcycles: 1 }), access);
     expect(issues).toContain('Pesados + motos supera el total motorizado.');
