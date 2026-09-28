@@ -55,9 +55,10 @@ function buildFichaSheet(study: Study, intersection: Intersection, summary: Stud
     rows.push([label]);
   };
   const program = study.configurationSnapshot.programs[0];
+  const isObserved = (study.source ?? 'observed') === 'observed';
 
   rows.push(['FICHA TÉCNICA DE AFORO – INTERSECCIÓN SEMAFORIZADA']);
-  if ((study.source ?? 'observed') === 'estimated_tdpa') rows.push([TDPA_WARNING]);
+  if (!isObserved) rows.push([TDPA_WARNING]);
   if (shouldShowIncompleteWarning(study, summary)) rows.push([INCOMPLETE_WARNING]);
   rows.push([]);
 
@@ -107,28 +108,28 @@ function buildFichaSheet(study: Study, intersection: Intersection, summary: Stud
 
   pushSection('4. RESUMEN Y HORA DE MÁXIMA DEMANDA');
   rows.push([
-    summary.isComplete ? 'Volumen total observado:' : 'Volumen registrado parcial:',
-    summary.totalMotorized,
+    isObserved ? (summary.isComplete ? 'Volumen total observado:' : 'Volumen registrado parcial:') : 'Volumen observado:',
+    isObserved ? summary.totalMotorized : 'N/D',
     '',
     'RESUMEN POR MOVIMIENTO',
     'Volumen capturado',
     '% sobre volumen capturado',
   ]);
   rows.push([
-    `Máximo intervalo ${study.metadata.intervalMinutes} min:`, summary.peakInterval?.volume ?? 'N/D', '',
-    summary.byMovement[0]?.movement ?? 'Izquierda', summary.byMovement[0]?.volume ?? 0, summary.byMovement[0]?.percent ?? 0,
+    `Máximo intervalo ${study.metadata.intervalMinutes} min:`, isObserved ? (summary.peakInterval?.volume ?? 'N/D') : 'N/D', '',
+    summary.byMovement[0]?.movement ?? 'Izquierda', isObserved ? (summary.byMovement[0]?.volume ?? 0) : 'N/D', isObserved ? (summary.byMovement[0]?.percent ?? 0) : 'N/D',
   ]);
   rows.push([
-    'Hora de máxima demanda:', summary.peakHour?.label ?? 'N/D', '',
-    summary.byMovement[1]?.movement ?? 'Frente', summary.byMovement[1]?.volume ?? 0, summary.byMovement[1]?.percent ?? 0,
+    'Hora de máxima demanda:', isObserved ? (summary.peakHour?.label ?? 'N/D') : 'N/D', '',
+    summary.byMovement[1]?.movement ?? 'Frente', isObserved ? (summary.byMovement[1]?.volume ?? 0) : 'N/D', isObserved ? (summary.byMovement[1]?.percent ?? 0) : 'N/D',
   ]);
   rows.push([
-    summary.peakHour?.factorLabel ?? 'FHP', summary.peakHour?.factor ?? 'N/D', '',
-    summary.byMovement[2]?.movement ?? 'Derecha', summary.byMovement[2]?.volume ?? 0, summary.byMovement[2]?.percent ?? 0,
+    summary.peakHour?.factorLabel ?? 'FHP', isObserved ? (summary.peakHour?.factor ?? 'N/D') : 'N/D', '',
+    summary.byMovement[2]?.movement ?? 'Derecha', isObserved ? (summary.byMovement[2]?.volume ?? 0) : 'N/D', isObserved ? (summary.byMovement[2]?.percent ?? 0) : 'N/D',
   ]);
   rows.push([
-    `Promedio ${study.metadata.intervalMinutes} min:`, summary.averageIntervalVolume, '',
-    summary.byMovement[3]?.movement ?? 'Retorno', summary.byMovement[3]?.volume ?? 0, summary.byMovement[3]?.percent ?? 0,
+    `Promedio ${study.metadata.intervalMinutes} min:`, isObserved ? summary.averageIntervalVolume : 'N/D', '',
+    summary.byMovement[3]?.movement ?? 'Retorno', isObserved ? (summary.byMovement[3]?.volume ?? 0) : 'N/D', isObserved ? (summary.byMovement[3]?.percent ?? 0) : 'N/D',
   ]);
   rows.push([]);
 
