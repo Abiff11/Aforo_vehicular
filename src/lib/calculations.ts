@@ -23,7 +23,6 @@ const MINUTES_PER_DAY = 24 * 60;
 interface SignalCalculationInput {
   programs?: SignalProgram[];
   assignments?: SignalMovementAssignment[];
-  observedSaturationFlowPerLane?: number | null;
 }
 
 interface ProgramResolution {

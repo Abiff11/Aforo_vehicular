@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateStudySummary } from './calculations';
+import { calculateStudySummary, resolveProgramForInterval } from './calculations';
 import type { AccessConfig, CaptureRow, IntervalBlock, SignalMovementAssignment, SignalProgram } from './types';
 
 const intervals: IntervalBlock[] = [
@@ -100,6 +100,20 @@ describe('formal signal calculations', () => {
       maxObservedCycle: 92,
       programmedCycleSeconds: 90,
       averageDifferenceSeconds: 0,
+    });
+  });
+
+  it('resolves a program change exactly at an interval boundary without flagging an internal change', () => {
+    const p1 = { ...program, endTime: '07:45' };
+    const p2: SignalProgram = { ...program, id: 'p2', name: 'Valle', startTime: '07:45', endTime: '09:00' };
+
+    expect(resolveProgramForInterval([p1, p2], '07:30', '07:45')).toMatchObject({
+      program: { id: 'p1' },
+      crossesProgramChange: false,
+    });
+    expect(resolveProgramForInterval([p1, p2], '07:45', '08:00')).toMatchObject({
+      program: { id: 'p2' },
+      crossesProgramChange: false,
     });
   });
 

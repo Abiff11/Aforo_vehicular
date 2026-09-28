@@ -215,7 +215,7 @@ describe('capture calculations', () => {
       row(intervals[2], { left: 10, through: 130, right: 0 }),
       row(intervals[3], { left: 10, through: 150, right: 0 }),
     ];
-    const summary = calculateStudySummary(rows, [access], 15, { programs: [signalProgram], observedSaturationFlowPerLane: 1800 });
+    const summary = calculateStudySummary(rows, [access], 15, { programs: [signalProgram] });
     expect(summary.queueByAccess[0]).toMatchObject({
       accessName: 'Norte', maxQueue: 18, averageQueue: 5, maxQueueLength: 72, stoppedVehiclesPerCycle: 4.5,
     });
