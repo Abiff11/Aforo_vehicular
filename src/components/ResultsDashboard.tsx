@@ -227,6 +227,8 @@ export function ResultsDashboard({
           </div>
         )}
       </section>
+
+      {tdpaEstimate && <TdpaPanel estimate={tdpaEstimate} />}
     </div>
   );
 }
