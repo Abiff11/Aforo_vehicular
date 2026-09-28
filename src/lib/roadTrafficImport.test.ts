@@ -3,9 +3,12 @@ import { intersections } from '../data/intersections';
 import {
   calculateRoadTrafficProfile,
   createCorridorTrafficStudies,
+  createIntersectionTrafficEstimate,
   createTrafficStudyForIntersection,
+  DEFAULT_MOVEMENT_DISTRIBUTION,
   findCorridorIntersections,
   parseRoadTrafficCsv,
+  validateMovementDistribution,
 } from './roadTrafficImport';
 import { calculateStudySummary } from './calculations';
 import { createDefaultStudy } from './study';
@@ -20,12 +23,22 @@ describe('road traffic import', () => {
     const profile = calculateRoadTrafficProfile(record);
 
     expect(record.point).toBe('T. Aut. Cuacnopalan - Oaxaca');
+    expect(record.referenceYear).toBe(2024);
     expect(profile.dailyTraffic).toBe(24977);
     expect(profile.designHourTotal).toBe(1898);
     expect(profile.mainDirectionHour).toBe(970);
     expect(profile.oppositeDirectionHour).toBe(928);
     expect(profile.hourlyMotorcycles).toBe(201);
     expect(profile.hourlyHeavyVehicles).toBe(169);
+  });
+
+  it('uses the most recent TDPA year available in the CSV', () => {
+    const csv = `CARRETERA,"CLAVE CARRETERA",RUTA,"PUNTO GENERADOR",KM,TDPA2024,TDPA2026,M,AUTOS,AUTOBUSES,CAMIONES,D,K',LAT,LONG\nRuta,1,MEX-190,Punto,10,21000,24000,10,85,2,3,0.52,0.08,17.1,-96.7\n`;
+
+    const [record] = parseRoadTrafficCsv(csv);
+
+    expect(record.referenceYear).toBe(2026);
+    expect(record.annualDailyTraffic).toBe(24000);
   });
 
   it('detects the Carretera Panamericana corridor from INT-009', () => {
@@ -41,6 +54,57 @@ describe('road traffic import', () => {
     ]);
   });
 
+  it('validates configurable movement percentages as exactly 100 percent', () => {
+    expect(DEFAULT_MOVEMENT_DISTRIBUTION).toEqual({ left: 10, through: 80, right: 10, uTurn: 0 });
+    expect(validateMovementDistribution({ left: 12.5, through: 77.5, right: 10, uTurn: 0 })).toEqual([]);
+    expect(validateMovementDistribution({ left: 10, through: 75, right: 10, uTurn: 0 })).toContain(
+      'La distribución de movimientos debe sumar exactamente 100%.',
+    );
+    expect(validateMovementDistribution({ left: 10, through: 85, right: 10, uTurn: 0 })).toContain(
+      'La distribución de movimientos excede 100%.',
+    );
+  });
+
+  it('rejects flow assigned to a movement disabled in the physical configuration', () => {
+    const study = createDefaultStudy(intersections[0].id);
+    const north = study.configurationSnapshot.accesses.find((access) => access.id === 'north');
+    if (!north) throw new Error('Acceso norte no encontrado');
+    north.movements.right = false;
+
+    const issues = validateMovementDistribution(
+      { left: 10, through: 80, right: 10, uTurn: 0 },
+      north.movements,
+    );
+
+    expect(issues).toContain('El movimiento Derecha está deshabilitado y debe tener 0%.');
+  });
+
+  it('creates a configurable design-hour estimate for one intersection without losing vehicles to rounding', () => {
+    const [record] = parseRoadTrafficCsv(sourceCsv);
+    const study = createDefaultStudy(intersections[0].id);
+    const estimate = createIntersectionTrafficEstimate(record, study.configurationSnapshot.accesses, {
+      mainDirectionAccessId: 'north',
+      oppositeDirectionAccessId: 'south',
+      movementDistributionByAccess: {
+        north: { left: 12.5, through: 77.5, right: 10, uTurn: 0 },
+        south: { left: 10, through: 80, right: 10, uTurn: 0 },
+      },
+    });
+
+    expect(estimate.referenceYear).toBe(2024);
+    expect(estimate.designHourTotal).toBe(1898);
+    expect(estimate.accesses).toHaveLength(2);
+
+    const north = estimate.accesses.find((access) => access.accessId === 'north');
+    const south = estimate.accesses.find((access) => access.accessId === 'south');
+
+    expect(north?.hourlyVolume).toBe(970);
+    expect(north?.movements).toEqual({ left: 121, through: 752, right: 97, uTurn: 0 });
+    expect(Object.values(north?.movements ?? {}).reduce((sum, value) => sum + value, 0)).toBe(970);
+    expect(south?.hourlyVolume).toBe(928);
+    expect(Object.values(south?.movements ?? {}).reduce((sum, value) => sum + value, 0)).toBe(928);
+  });
+
   it('creates a TDPA estimate without fabricating an observed intersection count', () => {
     const [record] = parseRoadTrafficCsv(sourceCsv);
     const imported = createTrafficStudyForIntersection(record, intersections[8]);
@@ -53,6 +117,7 @@ describe('road traffic import', () => {
     expect(imported.study.source).toBe('estimated_tdpa');
     expect(imported.study.currentStep).toBe(6);
     expect(imported.study.tdpaEstimate).toMatchObject({
+      referenceYear: 2024,
       dailyTraffic: 24977,
       designHourFactor: 0.076,
       directionalDistribution: 0.511,

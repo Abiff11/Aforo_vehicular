@@ -136,6 +136,7 @@ export interface TdpaEstimate {
   route: string;
   point: string;
   kilometer: number;
+  referenceYear: number;
   dailyTraffic: number;
   designHourFactor: number;
   directionalDistribution: number;

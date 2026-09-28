@@ -1,7 +1,47 @@
-import type { Intersection, Study, TdpaEstimate } from './types';
+import type { AccessConfig, Intersection, MovementKey, Study, TdpaEstimate } from './types';
 import { createDefaultStudy, hasCapturedData } from './study';
 
 const EARTH_RADIUS_METERS = 6_371_000;
+const MOVEMENT_KEYS: MovementKey[] = ['left', 'through', 'right', 'uTurn'];
+const MOVEMENT_LABELS: Record<MovementKey, string> = {
+  left: 'Izquierda',
+  through: 'Frente',
+  right: 'Derecha',
+  uTurn: 'Retorno',
+};
+const PERCENT_TOLERANCE = 1e-9;
+
+export type MovementDistribution = Record<MovementKey, number>;
+
+export const DEFAULT_MOVEMENT_DISTRIBUTION: MovementDistribution = {
+  left: 10,
+  through: 80,
+  right: 10,
+  uTurn: 0,
+};
+
+export interface CorridorEstimationSettings {
+  mainDirectionAccessId: string;
+  oppositeDirectionAccessId: string;
+  movementDistributionByAccess?: Record<string, MovementDistribution>;
+}
+
+export interface EstimatedAccessFlow {
+  accessId: string;
+  accessName: string;
+  direction: 'main' | 'opposite';
+  hourlyVolume: number;
+  distribution: MovementDistribution;
+  movements: Record<MovementKey, number>;
+}
+
+export interface IntersectionTrafficEstimate {
+  referenceYear: number;
+  designHourTotal: number;
+  mainDirectionHour: number;
+  oppositeDirectionHour: number;
+  accesses: EstimatedAccessFlow[];
+}
 
 export interface RoadTrafficRecord {
   road: string;
@@ -9,6 +49,7 @@ export interface RoadTrafficRecord {
   route: string;
   point: string;
   kilometer: number;
+  referenceYear: number;
   annualDailyTraffic: number;
   motorcyclePercent: number;
   autosPercent: number;
@@ -132,6 +173,124 @@ function getCorridorSegment(intersections: Intersection[], source: Intersection)
   return segmentCounts.sort((left, right) => right.count - left.count)[0]?.segment ?? source.name;
 }
 
+function findLatestTdpaColumn(headers: string[]): { header: string; year: number } {
+  const candidates = headers
+    .map((header) => {
+      const match = header.match(/^TDPA(\d{4})$/i);
+      return match ? { header, year: Number(match[1]) } : null;
+    })
+    .filter((item): item is { header: string; year: number } => item !== null)
+    .sort((left, right) => right.year - left.year);
+
+  const latest = candidates[0];
+  if (!latest) {
+    throw new Error('El CSV no contiene una columna TDPA con año, por ejemplo TDPA2024.');
+  }
+  return latest;
+}
+
+export function validateMovementDistribution(
+  distribution: MovementDistribution,
+  enabledMovements?: Record<MovementKey, boolean>,
+): string[] {
+  const issues: string[] = [];
+
+  MOVEMENT_KEYS.forEach((movement) => {
+    const value = distribution[movement];
+    if (!Number.isFinite(value) || value < 0 || value > 100) {
+      issues.push(`El porcentaje de ${MOVEMENT_LABELS[movement]} debe estar entre 0% y 100%.`);
+    }
+    if (enabledMovements && !enabledMovements[movement] && Math.abs(value) > PERCENT_TOLERANCE) {
+      issues.push(`El movimiento ${MOVEMENT_LABELS[movement]} está deshabilitado y debe tener 0%.`);
+    }
+  });
+
+  const total = MOVEMENT_KEYS.reduce((sum, movement) => sum + distribution[movement], 0);
+  if (Number.isFinite(total)) {
+    if (total > 100 + PERCENT_TOLERANCE) {
+      issues.push('La distribución de movimientos excede 100%.');
+    } else if (Math.abs(total - 100) > PERCENT_TOLERANCE) {
+      issues.push('La distribución de movimientos debe sumar exactamente 100%.');
+    }
+  }
+
+  return issues;
+}
+
+function allocateIntegerVolume(total: number, distribution: MovementDistribution): Record<MovementKey, number> {
+  const exact = MOVEMENT_KEYS.map((movement, index) => ({
+    movement,
+    index,
+    exact: total * distribution[movement] / 100,
+  }));
+  const allocated = Object.fromEntries(
+    exact.map(({ movement, exact: value }) => [movement, Math.floor(value)]),
+  ) as Record<MovementKey, number>;
+  let remainder = total - MOVEMENT_KEYS.reduce((sum, movement) => sum + allocated[movement], 0);
+
+  exact
+    .map((item) => ({ ...item, fraction: item.exact - Math.floor(item.exact) }))
+    .sort((left, right) => right.fraction - left.fraction || left.index - right.index)
+    .forEach(({ movement }) => {
+      if (remainder <= 0) return;
+      allocated[movement] += 1;
+      remainder -= 1;
+    });
+
+  return allocated;
+}
+
+function createEstimatedAccessFlow(
+  access: AccessConfig,
+  direction: 'main' | 'opposite',
+  hourlyVolume: number,
+  distribution: MovementDistribution,
+): EstimatedAccessFlow {
+  const issues = validateMovementDistribution(distribution, access.movements);
+  if (issues.length > 0) {
+    throw new Error(`Distribución inválida para ${access.name}: ${issues.join(' ')}`);
+  }
+
+  return {
+    accessId: access.id,
+    accessName: access.name,
+    direction,
+    hourlyVolume,
+    distribution: { ...distribution },
+    movements: allocateIntegerVolume(hourlyVolume, distribution),
+  };
+}
+
+export function createIntersectionTrafficEstimate(
+  record: RoadTrafficRecord,
+  accesses: AccessConfig[],
+  settings: CorridorEstimationSettings,
+): IntersectionTrafficEstimate {
+  if (settings.mainDirectionAccessId === settings.oppositeDirectionAccessId) {
+    throw new Error('Los sentidos principal y opuesto deben usar accesos distintos.');
+  }
+
+  const mainAccess = accesses.find((access) => access.id === settings.mainDirectionAccessId);
+  const oppositeAccess = accesses.find((access) => access.id === settings.oppositeDirectionAccessId);
+  if (!mainAccess) throw new Error(`Acceso principal no encontrado: ${settings.mainDirectionAccessId}`);
+  if (!oppositeAccess) throw new Error(`Acceso opuesto no encontrado: ${settings.oppositeDirectionAccessId}`);
+
+  const profile = calculateRoadTrafficProfile(record);
+  const mainDistribution = settings.movementDistributionByAccess?.[mainAccess.id] ?? DEFAULT_MOVEMENT_DISTRIBUTION;
+  const oppositeDistribution = settings.movementDistributionByAccess?.[oppositeAccess.id] ?? DEFAULT_MOVEMENT_DISTRIBUTION;
+
+  return {
+    referenceYear: record.referenceYear,
+    designHourTotal: profile.designHourTotal,
+    mainDirectionHour: profile.mainDirectionHour,
+    oppositeDirectionHour: profile.oppositeDirectionHour,
+    accesses: [
+      createEstimatedAccessFlow(mainAccess, 'main', profile.mainDirectionHour, mainDistribution),
+      createEstimatedAccessFlow(oppositeAccess, 'opposite', profile.oppositeDirectionHour, oppositeDistribution),
+    ],
+  };
+}
+
 export function parseRoadTrafficCsv(csv: string): RoadTrafficRecord[] {
   const lines = csv
     .split(/\r?\n/)
@@ -139,7 +298,9 @@ export function parseRoadTrafficCsv(csv: string): RoadTrafficRecord[] {
     .filter(Boolean);
   if (lines.length < 2) throw new Error('El CSV no contiene filas de datos.');
 
-  const headers = splitCsvLine(lines[0]);
+  const headers = splitCsvLine(lines[0]).map((header) => header.trim());
+  const tdpaColumn = findLatestTdpaColumn(headers);
+
   return lines.slice(1).map((line) => {
     const cells = splitCsvLine(line);
     const row = new Map(headers.map((header, index) => [header, cells[index] ?? '']));
@@ -152,7 +313,8 @@ export function parseRoadTrafficCsv(csv: string): RoadTrafficRecord[] {
       route: row.get('RUTA')?.trim() ?? '',
       point: row.get('PUNTO GENERADOR')?.trim() ?? '',
       kilometer: parseNumber(row.get('KM'), 'KM'),
-      annualDailyTraffic: parseNumber(row.get('TDPA2024'), 'TDPA2024'),
+      referenceYear: tdpaColumn.year,
+      annualDailyTraffic: parseNumber(row.get(tdpaColumn.header), tdpaColumn.header),
       motorcyclePercent: parseNumber(row.get('M'), 'M'),
       autosPercent: parseNumber(row.get('AUTOS'), 'AUTOS'),
       busesPercent,
@@ -192,6 +354,7 @@ export function createTdpaEstimate(record: RoadTrafficRecord): TdpaEstimate {
     route: record.route,
     point: record.point,
     kilometer: record.kilometer,
+    referenceYear: record.referenceYear,
     dailyTraffic: profile.dailyTraffic,
     designHourFactor: normalizeFraction(record.designHourFactor),
     directionalDistribution: normalizeFraction(record.directionalDistribution),
