@@ -10,14 +10,29 @@ function defaultStudiesByIntersection(activeStudy: Study | null): Record<string,
   return { [activeStudy.intersectionId]: activeStudy };
 }
 
+function migrateMetadata(metadata: StudyMetadata): StudyMetadata {
+  return {
+    date: metadata.date,
+    startTime: metadata.startTime,
+    endTime: metadata.endTime,
+    intervalMinutes: metadata.intervalMinutes,
+    surveyor: metadata.surveyor,
+    weather: metadata.weather,
+    notes: metadata.notes ?? '',
+  };
+}
+
 function defaultStudyTemplate(activeStudy: Study | null): StudyMetadata {
-  return activeStudy?.metadata ? { ...activeStudy.metadata } : createDefaultStudyMetadata();
+  return activeStudy?.metadata ? migrateMetadata(activeStudy.metadata) : createDefaultStudyMetadata();
 }
 
 function migrateConfig(config: IntersectionConfig): IntersectionConfig {
   return {
     ...config,
-    signalMovementAssignments: config.signalMovementAssignments ?? [],
+    signalMovementAssignments: (config.signalMovementAssignments ?? []).map((assignment) => ({
+      ...assignment,
+      saturationSource: assignment.saturationSource ?? 'unknown',
+    })),
   };
 }
 
@@ -26,6 +41,7 @@ function migrateStudy(study: Study, legacyUnverified: boolean, remapWizardStep: 
   return {
     ...study,
     currentStep,
+    metadata: migrateMetadata(study.metadata),
     source: study.source ?? 'observed',
     tdpaEstimate: study.tdpaEstimate ?? null,
     legacyUnverified: legacyUnverified || study.legacyUnverified === true,
@@ -61,10 +77,10 @@ export function createInitialState(): StoredState {
 
 export function saveStoredState(state: StoredState): void {
   const payload: VersionedStoredState = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     ...state,
     customIntersections: state.customIntersections ?? [],
-    studyTemplate: state.studyTemplate ?? defaultStudyTemplate(state.activeStudy),
+    studyTemplate: migrateMetadata(state.studyTemplate ?? defaultStudyTemplate(state.activeStudy)),
     studiesByIntersection: state.studiesByIntersection ?? defaultStudiesByIntersection(state.activeStudy),
   };
 
@@ -73,12 +89,12 @@ export function saveStoredState(state: StoredState): void {
 
 export function loadStoredState(): VersionedStoredState {
   const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return { schemaVersion: 2, ...createInitialState() };
+  if (!raw) return { schemaVersion: 3, ...createInitialState() };
 
   try {
     const parsed = JSON.parse(raw) as VersionedStoredState;
-    if (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) {
-      return { schemaVersion: 2, ...createInitialState() };
+    if (parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2 && parsed.schemaVersion !== 3) {
+      return { schemaVersion: 3, ...createInitialState() };
     }
 
     const isSchema1 = parsed.schemaVersion === 1;
@@ -98,15 +114,15 @@ export function loadStoredState(): VersionedStoredState {
 
     return {
       ...parsed,
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeStudy,
       customIntersections: parsed.customIntersections ?? [],
       intersectionConfigs,
       lastConfiguration: parsed.lastConfiguration ? migrateConfig(parsed.lastConfiguration) : null,
-      studyTemplate: parsed.studyTemplate ?? defaultStudyTemplate(activeStudy),
+      studyTemplate: parsed.studyTemplate ? migrateMetadata(parsed.studyTemplate) : defaultStudyTemplate(activeStudy),
       studiesByIntersection,
     };
   } catch {
-    return { schemaVersion: 2, ...createInitialState() };
+    return { schemaVersion: 3, ...createInitialState() };
   }
 }
