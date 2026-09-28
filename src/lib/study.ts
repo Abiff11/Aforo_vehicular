@@ -119,6 +119,13 @@ export function hasCapturedData(study: Study): boolean {
   );
 }
 
+function invalidateReviewedStatus(study: Study): Study {
+  return {
+    ...study,
+    status: study.status === 'validated' || study.status === 'exported' ? 'draft' : study.status,
+  };
+}
+
 function mergeCompatibleRow(emptyRow: CaptureRow, previous: CaptureRow, access: AccessConfig): CaptureRow {
   return {
     ...emptyRow,
@@ -150,8 +157,9 @@ export function rebuildStudyRowsPreservingCapture(study: Study): Study {
     const access = accessById.get(emptyRow.accessId);
     return previous && access ? mergeCompatibleRow(emptyRow, previous, access) : emptyRow;
   });
+  const invalidated = invalidateReviewedStatus(study);
 
-  return { ...study, intervals, rows, updatedAt: new Date().toISOString() };
+  return { ...invalidated, intervals, rows, updatedAt: new Date().toISOString() };
 }
 
 export function rebuildStudyRows(study: Study): Study {
@@ -159,7 +167,8 @@ export function rebuildStudyRows(study: Study): Study {
 }
 
 function withUpdatedAt(study: Study): Study {
-  return { ...study, updatedAt: new Date().toISOString() };
+  const invalidated = invalidateReviewedStatus(study);
+  return { ...invalidated, updatedAt: new Date().toISOString() };
 }
 
 function rebuildRowsWithConfiguration(study: Study): Study {
