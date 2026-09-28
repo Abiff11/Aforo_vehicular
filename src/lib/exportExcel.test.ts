@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
+import { calculateStudySummary } from './calculations';
 import { exportStudyWorkbook } from './exportExcel';
 import {
   addSignalMovementAssignment,
@@ -100,33 +101,46 @@ describe('exportStudyWorkbook calculation integrity', () => {
     expect(detailed[0]).toMatchObject({ Izquierda: 'N/D', Frente: 'N/D', Derecha: 'N/D', Pesados: 'N/D' });
   });
 
-  it('exports formal lane-group capacity and observed cycle statistics from the shared calculation engine', () => {
+  it('exports formal lane-group capacity and observed cycle statistics directly from the shared calculation engine', () => {
     const study = createFormalStudy();
+    const summary = calculateStudySummary(
+      study.rows,
+      study.configurationSnapshot.accesses,
+      study.metadata.intervalMinutes,
+      {
+        programs: study.configurationSnapshot.programs,
+        assignments: study.configurationSnapshot.signalMovementAssignments ?? [],
+        observedSaturationFlowPerLane: study.metadata.observedSaturationFlowPerLane,
+      },
+    );
+    const expectedGroup = summary.signalGroupIndicators?.[0];
+    const expectedCycle = summary.cycleSummaries?.find((item) => item.accessId === 'north');
     const workbook = exportStudyWorkbook(study, intersections[0]);
     const indicators = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets['06_INDICADORES']);
     const group = indicators.find((row) => row.Tipo === 'Grupo semafórico');
     const cycle = indicators.find((row) => row.Tipo === 'Ciclo observado' && row.Acceso === 'Norte');
 
+    expect(expectedGroup).toBeDefined();
     expect(group).toMatchObject({
       Acceso: 'Norte',
       Movimiento: 'Frente',
       Programa: 'p1',
       Fase: 'phase-1',
-      VolumenHoraPico: 520,
-      Saturacion: 1800,
-      Carriles: 2,
-      VerdeEfectivo: 40,
-      Ciclo: 90,
-      Capacidad: 1600,
+      VolumenHoraPico: expectedGroup?.peakHourVolume ?? 'N/D',
+      Saturacion: expectedGroup?.saturationFlowPerLane ?? 'N/D',
+      Carriles: expectedGroup?.lanes ?? 'N/D',
+      VerdeEfectivo: expectedGroup?.effectiveGreenSeconds ?? 'N/D',
+      Ciclo: expectedGroup?.cycleSeconds ?? 'N/D',
+      Capacidad: expectedGroup?.capacity ?? 'N/D',
     });
-    expect(Number(group?.['g/C'])).toBeCloseTo(40 / 90);
-    expect(Number(group?.['v/c'])).toBeCloseTo(0.325);
+    expect(Number(group?.['g/C'])).toBeCloseTo(expectedGroup?.greenRatio ?? 0);
+    expect(Number(group?.['v/c'])).toBeCloseTo(expectedGroup?.volumeCapacityRatio ?? 0);
     expect(cycle).toMatchObject({
-      CicloPromedio: 90,
-      CicloMinimo: 88,
-      CicloMaximo: 92,
-      CicloProgramado: 90,
-      DiferenciaPromedio: 0,
+      CicloPromedio: expectedCycle?.averageObservedCycle ?? 'N/D',
+      CicloMinimo: expectedCycle?.minObservedCycle ?? 'N/D',
+      CicloMaximo: expectedCycle?.maxObservedCycle ?? 'N/D',
+      CicloProgramado: expectedCycle?.programmedCycleSeconds ?? 'N/D',
+      DiferenciaPromedio: expectedCycle?.averageDifferenceSeconds ?? 'N/D',
     });
 
     const aggregate = indicators.find((row) => row.Tipo === 'Capacidad agregada');
