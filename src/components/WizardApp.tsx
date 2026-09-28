@@ -39,6 +39,7 @@ import {
   validateStudy,
 } from '../lib/study';
 import { createInitialState, loadStoredState, saveStoredState, STORAGE_KEY } from '../lib/storage';
+import { updateTdpaMovementPercentage } from '../lib/tdpaCorridorSettings';
 import { validateStudyPeriod } from '../lib/time';
 import type { CorridorTrafficStudy, RoadTrafficProfile } from '../lib/roadTrafficImport';
 import type {
@@ -52,6 +53,7 @@ import type {
 } from '../lib/types';
 import { IntersectionMap } from './IntersectionMap';
 import { ResultsDashboard } from './ResultsDashboard';
+import { TdpaCorridorSettingsPanel } from './TdpaCorridorSettingsPanel';
 
 const movementLabels: Record<MovementKey, string> = {
   left: 'Izq',
@@ -397,7 +399,6 @@ export function WizardApp() {
       id: intersection.id === oldId ? nextId : intersection.id,
       relatedIntersectionIds: remapRelated(intersection.relatedIntersectionIds ?? []),
     }));
-
     const existingConfig = state.intersectionConfigs[oldId];
     const nextConfigs = { ...state.intersectionConfigs };
     if (existingConfig) {
@@ -535,7 +536,14 @@ export function WizardApp() {
     const enabling = !access.movements[movement];
     const losesCapturedValue = !enabling && activeStudy.rows.some((row) => row.accessId === accessId && row[movement] !== null);
     if (losesCapturedValue && !window.confirm('Este movimiento ya tiene datos capturados. Deshabilitarlo eliminará esos valores de la tabla. ¿Continuar?')) return;
-    setActiveStudy(updateAccessMovement(activeStudy, accessId, movement, enabling));
+    let nextStudy = updateAccessMovement(activeStudy, accessId, movement, enabling);
+    if (!enabling) {
+      nextStudy = {
+        ...nextStudy,
+        tdpaCorridorSettings: updateTdpaMovementPercentage(activeStudy, accessId, movement, 0),
+      };
+    }
+    setActiveStudy(nextStudy);
   }
 
   function updateSignalGroup(assignment: SignalMovementAssignment, changes: Partial<Omit<SignalMovementAssignment, 'id'>>): void {
@@ -787,6 +795,16 @@ export function WizardApp() {
                 </article>
               ))}
             </div>
+
+            <TdpaCorridorSettingsPanel
+              study={activeStudy}
+              onChange={(settings) => setActiveStudy({
+                ...activeStudy,
+                tdpaCorridorSettings: settings,
+                status: activeStudy.status === 'validated' || activeStudy.status === 'exported' ? 'draft' : activeStudy.status,
+                updatedAt: new Date().toISOString(),
+              })}
+            />
 
             <section className="panel">
               <div className="section-heading">

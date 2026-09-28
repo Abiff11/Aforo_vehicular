@@ -149,6 +149,14 @@ export interface TdpaEstimate {
   heavyVehicleShare: number;
 }
 
+export type TdpaMovementDistribution = Record<MovementKey, number>;
+
+export interface TdpaCorridorSettings {
+  mainDirectionAccessId: string;
+  oppositeDirectionAccessId: string;
+  movementDistributionByAccess: Record<string, TdpaMovementDistribution>;
+}
+
 export interface Study {
   id: string;
   intersectionId: string;
@@ -161,6 +169,7 @@ export interface Study {
   status: StudyStatus;
   source?: StudySource;
   tdpaEstimate?: TdpaEstimate | null;
+  tdpaCorridorSettings?: TdpaCorridorSettings | null;
   legacyUnverified?: boolean;
   createdAt: string;
   updatedAt: string;
