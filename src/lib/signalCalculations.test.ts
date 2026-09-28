@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateStudySummary, resolveProgramForInterval } from './calculations';
+import { calculateStudySummary, resolveProgramForInterval, validateSignalConfiguration } from './calculations';
 import type { AccessConfig, CaptureRow, IntervalBlock, SignalMovementAssignment, SignalProgram } from './types';
 
 const intervals: IntervalBlock[] = [
@@ -115,6 +115,17 @@ describe('formal signal calculations', () => {
       program: { id: 'p2' },
       crossesProgramChange: false,
     });
+    expect(validateSignalConfiguration([p1, p2], [])).toEqual([]);
+  });
+
+  it('reports overlapping programs without mixing them into capture validation', () => {
+    const p1 = { ...program, endTime: '08:00' };
+    const p2: SignalProgram = { ...program, id: 'p2', name: 'Valle', startTime: '07:45', endTime: '09:00' };
+    const summary = calculateStudySummary(rows, [access], 15, { programs: [p1, p2], assignments: [assignment] });
+
+    expect(summary.signalValidationIssues).toContainEqual(expect.objectContaining({ code: 'program-overlap' }));
+    expect(summary.issues).toEqual([]);
+    expect(summary.signalGroupIndicators?.[0]).toMatchObject({ capacity: null, volumeCapacityRatio: null });
   });
 
   it('calculates formal capacity and v/c only for a complete movement-phase lane group', () => {
@@ -143,6 +154,24 @@ describe('formal signal calculations', () => {
     });
 
     expect(summary.signalGroupIndicators?.[0]).toMatchObject({ capacity: null, volumeCapacityRatio: null, greenRatio: null });
+  });
+
+  it('rejects zero effective green as an invalid formal input', () => {
+    const summary = calculateStudySummary(rows, [access], 15, {
+      programs: [program],
+      assignments: [{ ...assignment, effectiveGreenSeconds: 0 }],
+    });
+
+    expect(summary.signalValidationIssues).toContainEqual(expect.objectContaining({
+      code: 'invalid-effective-green',
+      assignmentId: 'north-through',
+    }));
+    expect(summary.signalGroupIndicators?.[0]).toMatchObject({
+      effectiveGreenSeconds: null,
+      greenRatio: null,
+      capacity: null,
+      volumeCapacityRatio: null,
+    });
   });
 
   it('warns when a program changes inside an interval and excludes that interval from formal signal analysis', () => {
