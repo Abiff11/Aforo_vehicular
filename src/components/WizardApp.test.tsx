@@ -37,6 +37,15 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(screen.queryByLabelText(/Flujo de saturación general/)).not.toBeInTheDocument();
   });
 
+  it('shows the verified intersection catalog before any custom marker is created', () => {
+    render(<WizardApp />);
+    goToIntersectionStep();
+
+    const map = screen.getByRole('region', { name: 'Mapa real de intersecciones de Oaxaca' });
+    expect(within(map).getByRole('button', { name: /INT-001 Calzada Ninos Heroes/ })).toBeInTheDocument();
+    expect(within(map).getByRole('button', { name: /INT-047 Avenida Ferrocarril/ })).toBeInTheDocument();
+  });
+
   it('reuses shared study metadata and restores each intersection study when switching markers', () => {
     render(<WizardApp />);
     fireEvent.change(screen.getByLabelText('Aforador'), { target: { value: 'Hiram' } });
@@ -48,7 +57,7 @@ describe('WizardApp ficha aforo capture flow', () => {
     fireEvent.click(screen.getByRole('button', { name: /^2\s*Interseccion$/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
     const map = screen.getByRole('region', { name: 'Mapa real de intersecciones de Oaxaca' });
-    fireEvent.click(within(map).getByRole('button', { name: /INT-001 Interseccion 001/ }));
+    fireEvent.click(within(map).getByRole('button', { name: /INT-048 Interseccion 048/ }));
     fireEvent.click(screen.getByRole('button', { name: /^3\s*Configuracion$/ }));
     expect(screen.getByDisplayValue('Acceso A personalizado')).toBeInTheDocument();
 
@@ -56,15 +65,14 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(screen.getByLabelText('Aforador')).toHaveValue('Hiram');
   });
 
-  it('starts without default intersections and creates a work intersection from the map', () => {
+  it('shows the catalog and creates a custom work intersection after it', () => {
     render(<WizardApp />);
     goToIntersectionStep();
     const map = screen.getByRole('region', { name: 'Mapa real de intersecciones de Oaxaca' });
-    expect(within(map).queryByRole('button', { name: /INT-047/ })).not.toBeInTheDocument();
-    expect(screen.getByText('Crea un marcador en el mapa para comenzar.')).toBeInTheDocument();
+    expect(within(map).getByRole('button', { name: /INT-047 Avenida Ferrocarril/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
-    expect(screen.getByRole('heading', { name: 'INT-001' })).toBeInTheDocument();
-    expect(within(map).getByRole('button', { name: /INT-001 Interseccion 001/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'INT-048' })).toBeInTheDocument();
+    expect(within(map).getByRole('button', { name: /INT-048 Interseccion 048/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Limpiar campos' })).toBeInTheDocument();
   });
 
@@ -76,10 +84,10 @@ describe('WizardApp ficha aforo capture flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
     fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
     const map = screen.getByRole('region', { name: 'Mapa real de intersecciones de Oaxaca' });
-    fireEvent.click(within(map).getByRole('button', { name: /INT-001 Interseccion 001/ }));
+    fireEvent.click(within(map).getByRole('button', { name: /INT-048 Interseccion 048/ }));
     fireEvent.change(screen.getByLabelText('Nombre'), { target: { value: 'Cruce temporal' } });
     fireEvent.click(screen.getByRole('button', { name: 'Limpiar campos' }));
-    expect(within(map).getByRole('button', { name: /INT-002 Interseccion 002/ })).toBeInTheDocument();
+    expect(within(map).getByRole('button', { name: /INT-049 Interseccion 049/ })).toBeInTheDocument();
     expect(screen.getByLabelText('Nombre')).toHaveValue('');
     fireEvent.click(screen.getByRole('button', { name: /^1\s*Estudio$/ }));
     expect(screen.getByLabelText('Aforador')).toHaveValue('Aforador persistente');
@@ -191,11 +199,10 @@ describe('WizardApp ficha aforo capture flow', () => {
   it('links one or more nearby intersections from the selected intersection card', () => {
     renderWithIntersection();
     fireEvent.click(screen.getByRole('button', { name: /^2\s*Interseccion$/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
     const map = screen.getByRole('region', { name: 'Mapa real de intersecciones de Oaxaca' });
-    fireEvent.click(within(map).getByRole('button', { name: /INT-001 Interseccion 001/ }));
+    fireEvent.click(within(map).getByRole('button', { name: /INT-001 Calzada Ninos Heroes/ }));
     const card = screen.getByRole('complementary');
-    fireEvent.click(within(card).getByRole('checkbox', { name: /INT-002 Interseccion 002/ }));
+    fireEvent.click(within(card).getByRole('checkbox', { name: /INT-002 Calzada Ninos Heroes/ }));
     expect(within(card).getByText('1 vinculadas')).toBeInTheDocument();
   });
 });

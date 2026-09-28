@@ -1,5 +1,6 @@
 import { createDefaultStudyMetadata } from './study';
-import type { IntersectionConfig, StoredState, Study, StudyMetadata, VersionedStoredState } from './types';
+import { intersections } from '../data/intersections';
+import type { Intersection, IntersectionConfig, StoredState, Study, StudyMetadata, VersionedStoredState } from './types';
 
 export const STORAGE_KEY = 'aforos.state.v1';
 
@@ -8,6 +9,15 @@ const LEGACY_STEP_TO_STUDY_FIRST_STEP = [1, 2, 3, 0, 4, 5, 6, 7] as const;
 function defaultStudiesByIntersection(activeStudy: Study | null): Record<string, Study> {
   if (!activeStudy || activeStudy.intersectionId.startsWith('__')) return {};
   return { [activeStudy.intersectionId]: activeStudy };
+}
+
+function mergeCatalogIntersections(savedIntersections: Intersection[] | undefined): Intersection[] {
+  const savedById = new Map((savedIntersections ?? []).map((intersection) => [intersection.id, intersection]));
+  const catalogIds = new Set(intersections.map((intersection) => intersection.id));
+  const catalog = intersections.map((intersection) => ({ ...intersection, ...savedById.get(intersection.id) }));
+  const custom = (savedIntersections ?? []).filter((intersection) => !catalogIds.has(intersection.id));
+
+  return [...catalog, ...custom];
 }
 
 function migrateMetadata(metadata: StudyMetadata): StudyMetadata {
@@ -65,7 +75,7 @@ function migrateStudies(
 export function createInitialState(): StoredState {
   return {
     catalogVersion: '2026-09-25',
-    customIntersections: [],
+    customIntersections: mergeCatalogIntersections(),
     intersectionConfigs: {},
     lastConfiguration: null,
     activeStudy: null,
@@ -116,7 +126,7 @@ export function loadStoredState(): VersionedStoredState {
       ...parsed,
       schemaVersion: 3,
       activeStudy,
-      customIntersections: parsed.customIntersections ?? [],
+      customIntersections: mergeCatalogIntersections(parsed.customIntersections),
       intersectionConfigs,
       lastConfiguration: parsed.lastConfiguration ? migrateConfig(parsed.lastConfiguration) : null,
       studyTemplate: parsed.studyTemplate ? migrateMetadata(parsed.studyTemplate) : defaultStudyTemplate(activeStudy),
