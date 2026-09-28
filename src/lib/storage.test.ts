@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createDefaultStudy, updateProgram } from './study';
+import { addSignalMovementAssignment, createDefaultStudy, updateProgram } from './study';
 import { createInitialState, loadStoredState, saveStoredState, STORAGE_KEY } from './storage';
 
 describe('local storage persistence', () => {
@@ -17,10 +17,11 @@ describe('local storage persistence', () => {
       surveyor: '',
       weather: '',
     });
+    expect(state.studyTemplate).not.toHaveProperty('observedSaturationFlowPerLane');
     expect(state.studiesByIntersection).toEqual({});
   });
 
-  it('round-trips current state with schema version 2', () => {
+  it('round-trips current state with schema version 3', () => {
     const study = createDefaultStudy('INT-001');
     const state = {
       ...createInitialState(),
@@ -31,7 +32,7 @@ describe('local storage persistence', () => {
     saveStoredState(state);
 
     expect(loadStoredState()).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeStudy: {
         intersectionId: 'INT-001',
         currentStep: 0,
@@ -43,6 +44,45 @@ describe('local storage persistence', () => {
         'INT-001': { intersectionId: 'INT-001', status: 'draft', source: 'observed' },
       },
       preferences: { intervalMinutes: 15 },
+    });
+  });
+
+  it('migrates schema 2 by dropping global saturation and preserving lane-group saturation with unknown origin', () => {
+    const study = addSignalMovementAssignment(createDefaultStudy('INT-004'));
+    const assignment = study.configurationSnapshot.signalMovementAssignments![0];
+    const legacyAssignment = {
+      ...assignment,
+      saturationSource: undefined,
+      saturationFlowPerLane: 1750,
+    };
+    const legacyMetadata = { ...study.metadata, observedSaturationFlowPerLane: 1900 };
+    const legacyStudy = {
+      ...study,
+      metadata: legacyMetadata,
+      configurationSnapshot: {
+        ...study.configurationSnapshot,
+        signalMovementAssignments: [legacyAssignment],
+      },
+    };
+
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        schemaVersion: 2,
+        ...createInitialState(),
+        activeStudy: legacyStudy,
+        studyTemplate: legacyMetadata,
+        studiesByIntersection: { 'INT-004': legacyStudy },
+      }),
+    );
+
+    const loaded = loadStoredState();
+    expect(loaded.schemaVersion).toBe(3);
+    expect(loaded.studyTemplate).not.toHaveProperty('observedSaturationFlowPerLane');
+    expect(loaded.activeStudy?.metadata).not.toHaveProperty('observedSaturationFlowPerLane');
+    expect(loaded.activeStudy?.configurationSnapshot.signalMovementAssignments?.[0]).toMatchObject({
+      saturationFlowPerLane: 1750,
+      saturationSource: 'unknown',
     });
   });
 
@@ -88,7 +128,7 @@ describe('local storage persistence', () => {
 
     const loaded = loadStoredState();
 
-    expect(loaded.schemaVersion).toBe(2);
+    expect(loaded.schemaVersion).toBe(3);
     expect(loaded.activeStudy).toMatchObject({
       intersectionId: 'INT-009',
       currentStep: 0,
