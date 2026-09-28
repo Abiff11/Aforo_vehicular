@@ -37,6 +37,7 @@ import {
   validateStudy,
 } from '../lib/study';
 import { createInitialState, loadStoredState, saveStoredState, STORAGE_KEY } from '../lib/storage';
+import { validateStudyPeriod } from '../lib/time';
 import type { CorridorTrafficStudy, RoadTrafficProfile } from '../lib/roadTrafficImport';
 import type {
   CaptureRow,
@@ -169,6 +170,7 @@ export function WizardApp() {
   const [helpStepIndex, setHelpStepIndex] = useState<number | null>(null);
   const [roadTrafficImport, setRoadTrafficImport] = useState<RoadTrafficImportState | null>(null);
   const [roadTrafficImportError, setRoadTrafficImportError] = useState<string | null>(null);
+  const [studyPeriodError, setStudyPeriodError] = useState<string | null>(null);
 
   const customIntersections = useMemo(() => state.customIntersections ?? [], [state.customIntersections]);
   const studiesByIntersection = useMemo(() => state.studiesByIntersection ?? {}, [state.studiesByIntersection]);
@@ -213,6 +215,16 @@ export function WizardApp() {
   function updateSharedMetadata(field: keyof StudyMetadata, value: string | number | null): void {
     const nextTemplate = { ...studyTemplate, [field]: value } as StudyMetadata;
     const rebuildRows = ['startTime', 'endTime', 'intervalMinutes'].includes(field);
+    const periodError = rebuildRows
+      ? validateStudyPeriod(nextTemplate.startTime, nextTemplate.endTime, nextTemplate.intervalMinutes)
+      : null;
+
+    if (periodError) {
+      setStudyPeriodError(periodError);
+      return;
+    }
+
+    if (rebuildRows) setStudyPeriodError(null);
     const studiesWithCapture = [activeStudy, ...Object.values(studiesByIntersection)].filter(
       (study, index, all) => isAssignedStudy(study) && all.findIndex((candidate) => candidate.id === study.id) === index && hasCapturedData(study),
     );
@@ -575,6 +587,7 @@ export function WizardApp() {
               <label>Clima<input value={studyTemplate.weather} onChange={(event) => updateSharedMetadata('weather', event.target.value)} /></label>
               <label>Observaciones generales<input value={studyTemplate.notes} onChange={(event) => updateSharedMetadata('notes', event.target.value)} /></label>
             </div>
+            {studyPeriodError && <p className="warning" role="alert">{studyPeriodError}</p>}
           </section>
         )}
 

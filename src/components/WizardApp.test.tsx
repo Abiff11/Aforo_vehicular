@@ -112,6 +112,16 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(endTime).toHaveValue('09:00');
   });
 
+  it('keeps the prior study period and explains when the selected interval is invalid', () => {
+    render(<WizardApp />);
+
+    const endTime = screen.getByLabelText('Hora termino');
+    fireEvent.change(endTime, { target: { value: '07:07' } });
+
+    expect(endTime).toHaveValue('09:00');
+    expect(screen.getByText('La duracion del estudio no puede dividirse exactamente en intervalos de 15 minutos.')).toBeInTheDocument();
+  });
+
   it('configures physical lane-group saturation in Configuracion and signal timing in Semaforo', () => {
     renderWithIntersection();
     fireEvent.click(screen.getByRole('button', { name: /^3\s*Configuracion$/ }));
