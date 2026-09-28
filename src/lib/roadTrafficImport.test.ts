@@ -11,6 +11,7 @@ import {
   parseRoadTrafficCsv,
   validateMovementDistribution,
 } from './roadTrafficImport';
+import { createRoadTrafficCorridorStudies } from './roadTrafficCorridorGeneration';
 import { calculateStudySummary } from './calculations';
 import { createDefaultStudy } from './study';
 import type { Intersection } from './types';
@@ -142,6 +143,49 @@ describe('road traffic import', () => {
     expect(analysis.records).toHaveLength(1);
     expect(analysis.assignments).toHaveLength(3);
     expect(analysis.assignments.every((assignment) => assignment.record.point === record.point)).toBe(true);
+  });
+
+  it('generates one TDPA study for every linked intersection using its assigned nearest record', () => {
+    const records = parseRoadTrafficCsv(multiRoadCsv);
+    const existingStudies = Object.fromEntries(
+      linkedIntersections.map((intersection) => [intersection.id, createDefaultStudy(intersection.id)]),
+    );
+    const generated = createRoadTrafficCorridorStudies(
+      records,
+      linkedIntersections,
+      'INT-A',
+      existingStudies,
+    );
+
+    expect(generated.analysis.corridorName).toBe('Carretera A');
+    expect(generated.studies.map(({ intersection }) => intersection.id)).toEqual(['INT-A', 'INT-B', 'INT-C']);
+    expect(generated.studies.map(({ study }) => study.tdpaEstimate?.dailyTraffic)).toEqual([20000, 24000, 24000]);
+    expect(generated.studies.every(({ study }) => study.source === 'estimated_tdpa')).toBe(true);
+    expect(generated.studies.every(({ study }) => study.rows.every((row) => row.through === null))).toBe(true);
+  });
+
+  it('preserves an existing observed study while generating TDPA studies for the rest of the corridor', () => {
+    const records = parseRoadTrafficCsv(multiRoadCsv);
+    const observed = createDefaultStudy('INT-B');
+    observed.metadata.surveyor = 'Aforador de campo';
+    observed.rows[0].through = 37;
+
+    const generated = createRoadTrafficCorridorStudies(
+      records,
+      linkedIntersections,
+      'INT-A',
+      { 'INT-B': observed },
+    );
+    const studyA = generated.studies.find(({ intersection }) => intersection.id === 'INT-A')?.study;
+    const studyB = generated.studies.find(({ intersection }) => intersection.id === 'INT-B')?.study;
+    const studyC = generated.studies.find(({ intersection }) => intersection.id === 'INT-C')?.study;
+
+    expect(studyA?.source).toBe('estimated_tdpa');
+    expect(studyC?.source).toBe('estimated_tdpa');
+    expect(studyB?.source).toBe('observed');
+    expect(studyB?.rows[0].through).toBe(37);
+    expect(studyB?.metadata.surveyor).toBe('Aforador de campo');
+    expect(studyB?.tdpaEstimate?.dailyTraffic).toBe(24000);
   });
 
   it('validates configurable movement percentages as exactly 100 percent', () => {
