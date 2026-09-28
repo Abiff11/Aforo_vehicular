@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -67,6 +67,25 @@ const fullMovementLabels: Record<MovementKey, string> = {
   uTurn: 'Retorno',
 };
 
+const captureFieldLabels: Partial<Record<keyof CaptureRow, string>> = {
+  left: 'Izquierda',
+  through: 'Frente',
+  right: 'Derecha',
+  uTurn: 'Retorno',
+  heavy: 'Pesados',
+  motorcycles: 'Motos',
+  bicycles: 'Bicicletas',
+  pedestrians: 'Peatones',
+  maxQueue: 'Cola máxima',
+  averageQueue: 'Cola promedio',
+  queueLength: 'Longitud de cola',
+  stoppedVehiclesPerCycle: 'Vehículos detenidos por ciclo',
+  observedCycle: 'Ciclo observado',
+  observedProgram: 'Programa observado opcional',
+  notes: 'Observaciones',
+};
+
+const movementFieldSet = new Set<keyof CaptureRow>(['left', 'through', 'right', 'uTurn']);
 const UNASSIGNED_INTERSECTION_ID = '__UNASSIGNED__';
 
 interface RoadTrafficImportState {
@@ -75,6 +94,33 @@ interface RoadTrafficImportState {
   point: string;
   profile: RoadTrafficProfile;
   studies: CorridorTrafficStudy[];
+}
+
+function captureInputId(rowId: string, field: keyof CaptureRow): string {
+  return `capture-${rowId}-${String(field)}`;
+}
+
+function captureIssueFields(issue: string): Array<keyof CaptureRow> {
+  const normalized = issue.toLocaleLowerCase('es');
+  if (normalized.includes('pesados + motos')) return ['heavy', 'motorcycles'];
+  if (normalized.includes('izquierda')) return ['left'];
+  if (normalized.includes('frente')) return ['through'];
+  if (normalized.includes('derecha')) return ['right'];
+  if (normalized.includes('retorno')) return ['uTurn'];
+  if (normalized.includes('pesados')) return ['heavy'];
+  if (normalized.includes('motos')) return ['motorcycles'];
+  if (normalized.includes('bicicletas')) return ['bicycles'];
+  if (normalized.includes('peatones')) return ['pedestrians'];
+  if (normalized.includes('cola máxima')) return ['maxQueue'];
+  if (normalized.includes('cola promedio')) return ['averageQueue'];
+  if (normalized.includes('longitud de cola')) return ['queueLength'];
+  if (normalized.includes('vehículos detenidos')) return ['stoppedVehiclesPerCycle'];
+  if (normalized.includes('ciclo observado')) return ['observedCycle'];
+  return [];
+}
+
+function captureIssuesForField(issues: string[], field: keyof CaptureRow): string[] {
+  return issues.filter((issue) => captureIssueFields(issue).includes(field));
 }
 
 function getInitialState(): StoredState {
@@ -173,6 +219,7 @@ export function WizardApp() {
   const [roadTrafficImport, setRoadTrafficImport] = useState<RoadTrafficImportState | null>(null);
   const [roadTrafficImportError, setRoadTrafficImportError] = useState<string | null>(null);
   const [studyPeriodError, setStudyPeriodError] = useState<string | null>(null);
+  const [pendingCaptureFocusId, setPendingCaptureFocusId] = useState<string | null>(null);
 
   const customIntersections = useMemo(() => state.customIntersections ?? [], [state.customIntersections]);
   const studiesByIntersection = useMemo(() => state.studiesByIntersection ?? {}, [state.studiesByIntersection]);
@@ -195,6 +242,11 @@ export function WizardApp() {
     [activeStudy],
   );
 
+  const rowValidationById = useMemo(
+    () => new Map((summary.rowValidation ?? []).map((result) => [result.rowId, result])),
+    [summary.rowValidation],
+  );
+
   const captureRowsToReview = (summary.rowValidation ?? [])
     .filter((result) => result.state !== 'complete')
     .map((result) => ({
@@ -209,6 +261,15 @@ export function WizardApp() {
       .sort((left, right) => left.mapNumber - right.mapNumber),
     [customIntersections, selectedIntersection?.id],
   );
+
+  useEffect(() => {
+    if (activeStudy.currentStep !== 4 || !pendingCaptureFocusId) return;
+    const element = document.getElementById(pendingCaptureFocusId);
+    if (!(element instanceof HTMLElement)) return;
+    element.focus();
+    element.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+    setPendingCaptureFocusId(null);
+  }, [activeStudy.currentStep, pendingCaptureFocusId]);
 
   function persist(nextState: StoredState): void {
     setState(nextState);
@@ -450,6 +511,21 @@ export function WizardApp() {
   function goToStep(index: number): void {
     if (!selectedIntersection && index > 1) return;
     setActiveStudy({ ...activeStudy, currentStep: Math.max(0, Math.min(index, wizardSteps.length - 1)) });
+  }
+
+  function focusCaptureIssue(rowId: string, issue: string): void {
+    const row = activeStudy.rows.find((candidate) => candidate.id === rowId);
+    const access = activeStudy.configurationSnapshot.accesses.find((candidate) => candidate.id === row?.accessId);
+    const mappedFields = captureIssueFields(issue);
+    const field = mappedFields.find((candidate) => {
+      if (!movementFieldSet.has(candidate)) return true;
+      return access?.movements[candidate as MovementKey] === true;
+    }) ?? (access
+      ? (Object.keys(access.movements) as MovementKey[]).find((movement) => access.movements[movement])
+      : undefined) ?? 'heavy';
+
+    setPendingCaptureFocusId(captureInputId(rowId, field));
+    goToStep(4);
   }
 
   function saveConfiguration(): void {
@@ -864,28 +940,73 @@ export function WizardApp() {
                 <tbody>
                   {activeStudy.rows.map((row) => {
                     const access = activeStudy.configurationSnapshot.accesses.find((candidate) => candidate.id === row.accessId) ?? activeStudy.configurationSnapshot.accesses[0];
+                    const validation = rowValidationById.get(row.id);
+                    const rowState = validation?.state ?? 'incomplete';
+                    const rowIssues = validation?.issues ?? [];
                     return (
-                      <tr key={row.id}>
+                      <tr className={`capture-row capture-row-${rowState}`} data-capture-state={rowState} key={row.id}>
                         <td>{row.intervalLabel}</td><td>{row.accessName}</td>
-                        {(['left', 'through', 'right', 'uTurn'] as MovementKey[]).map((field) => (
-                          <td key={field}>
-                            {access.movements[field] ? (
+                        {(['left', 'through', 'right', 'uTurn'] as MovementKey[]).map((field) => {
+                          const fieldIssues = captureIssuesForField(rowIssues, field);
+                          const inputId = captureInputId(row.id, field);
+                          const errorId = `${inputId}-error`;
+                          return (
+                            <td key={field}>
+                              {access.movements[field] ? (
+                                <>
+                                  <input
+                                    aria-describedby={fieldIssues.length > 0 ? errorId : undefined}
+                                    aria-invalid={fieldIssues.length > 0}
+                                    aria-label={`${fullMovementLabels[field]} · ${row.intervalLabel} · ${row.accessName}`}
+                                    id={inputId}
+                                    min={0}
+                                    type="number"
+                                    value={row[field] ?? ''}
+                                    onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))}
+                                  />
+                                  {fieldIssues.length > 0 && <span className="sr-only" id={errorId}>{fieldIssues.join(' ')}</span>}
+                                </>
+                              ) : 'N/A'}
+                            </td>
+                          );
+                        })}
+                        <td>{calculateRowMotorizedTotal(row, access)}</td>
+                        {(['heavy', 'motorcycles', 'bicycles', 'pedestrians', 'maxQueue', 'averageQueue', 'queueLength', 'stoppedVehiclesPerCycle', 'observedCycle'] as Array<keyof CaptureRow>).map((field) => {
+                          const fieldIssues = captureIssuesForField(rowIssues, field);
+                          const inputId = captureInputId(row.id, field);
+                          const errorId = `${inputId}-error`;
+                          return (
+                            <td key={field}>
                               <input
-                                aria-label={`${fullMovementLabels[field]} · ${row.intervalLabel} · ${row.accessName}`}
+                                aria-describedby={fieldIssues.length > 0 ? errorId : undefined}
+                                aria-invalid={fieldIssues.length > 0}
+                                aria-label={`${captureFieldLabels[field] ?? String(field)} · ${row.intervalLabel} · ${row.accessName}`}
+                                id={inputId}
                                 min={0}
                                 type="number"
-                                value={row[field] ?? ''}
+                                value={String(row[field] ?? '')}
                                 onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))}
                               />
-                            ) : 'N/A'}
-                          </td>
-                        ))}
-                        <td>{calculateRowMotorizedTotal(row, access)}</td>
-                        {(['heavy', 'motorcycles', 'bicycles', 'pedestrians', 'maxQueue', 'averageQueue', 'queueLength', 'stoppedVehiclesPerCycle', 'observedCycle'] as Array<keyof CaptureRow>).map((field) => (
-                          <td key={field}><input min={0} type="number" value={String(row[field] ?? '')} onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))} /></td>
-                        ))}
-                        <td><input aria-label={`Programa observado opcional · ${row.intervalLabel} · ${row.accessName}`} value={row.observedProgram} onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'observedProgram', event.target.value))} /></td>
-                        <td><input value={row.notes} onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'notes', event.target.value))} /></td>
+                              {fieldIssues.length > 0 && <span className="sr-only" id={errorId}>{fieldIssues.join(' ')}</span>}
+                            </td>
+                          );
+                        })}
+                        <td>
+                          <input
+                            aria-label={`Programa observado opcional · ${row.intervalLabel} · ${row.accessName}`}
+                            id={captureInputId(row.id, 'observedProgram')}
+                            value={row.observedProgram}
+                            onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'observedProgram', event.target.value))}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            aria-label={`Observaciones · ${row.intervalLabel} · ${row.accessName}`}
+                            id={captureInputId(row.id, 'notes')}
+                            value={row.notes}
+                            onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'notes', event.target.value))}
+                          />
+                        </td>
                       </tr>
                     );
                   })}
@@ -915,15 +1036,34 @@ export function WizardApp() {
                   </div>
                   <button className="primary" onClick={() => goToStep(4)} type="button">Ir a Aforo</button>
                 </div>
-                <ul>
-                  {captureRowsToReview.slice(0, 20).map((result) => (
-                    <li key={result.rowId}>
-                      <strong>{result.row ? `${result.row.intervalLabel} · ${result.row.accessName}` : result.rowId}</strong>
-                      {' — '}{result.state === 'error' ? 'Error: ' : 'Incompleta: '}{result.issues.join(' ')}
-                    </li>
-                  ))}
+                <ul className="capture-review-list">
+                  {captureRowsToReview.map((result) => {
+                    const rowLabel = result.row ? `${result.row.intervalLabel} · ${result.row.accessName}` : result.rowId;
+                    return (
+                      <li key={result.rowId}>
+                        <div className="capture-review-heading">
+                          <strong>{rowLabel}</strong>
+                          <span className={`capture-state capture-state-${result.state}`}>{result.state === 'error' ? 'Error' : 'Incompleta'}</span>
+                        </div>
+                        <ul>
+                          {result.issues.map((issue, index) => (
+                            <li key={`${result.rowId}-${index}-${issue}`}>
+                              <span>{issue}</span>
+                              <button
+                                aria-label={`Corregir ${issue} · ${rowLabel}`}
+                                className="validation-link"
+                                onClick={() => focusCaptureIssue(result.rowId, issue)}
+                                type="button"
+                              >
+                                Corregir
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </li>
+                    );
+                  })}
                 </ul>
-                {captureRowsToReview.length > 20 && <p>Se muestran 20 de {captureRowsToReview.length} filas por revisar.</p>}
               </div>
             )}
 

@@ -198,6 +198,54 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(screen.getByRole('heading', { name: 'Tabla unica de aforo' })).toBeInTheDocument();
   });
 
+  it('marks missing capture fields with stable accessible error metadata', () => {
+    renderWithIntersection();
+    fireEvent.click(screen.getByRole('button', { name: /^5\s*Aforo$/ }));
+
+    const input = screen.getByLabelText('Frente · 07:00-07:15 · Norte');
+    expect(input).toHaveAttribute('id');
+    expect(input.id).toMatch(/^capture-.+-through$/);
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    const describedBy = input.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)).toHaveTextContent('Falta frente.');
+  });
+
+  it('reflects incomplete, error and complete capture row states from shared validation', () => {
+    renderWithIntersection();
+    fireEvent.click(screen.getByRole('button', { name: /^5\s*Aforo$/ }));
+
+    const rowFor = () => screen.getByLabelText('Frente · 07:00-07:15 · Norte').closest('tr') as HTMLTableRowElement;
+    expect(rowFor()).toHaveClass('capture-row-incomplete');
+
+    fireEvent.change(screen.getByLabelText('Frente · 07:00-07:15 · Norte'), { target: { value: '-1' } });
+    expect(rowFor()).toHaveClass('capture-row-error');
+
+    within(rowFor()).getAllByRole('spinbutton').forEach((input) => {
+      fireEvent.change(input, { target: { value: '0' } });
+    });
+    expect(rowFor()).toHaveClass('capture-row-complete');
+  });
+
+  it('shows every capture issue and focuses the exact field selected from validation', async () => {
+    renderWithIntersection();
+    fireEvent.click(screen.getByRole('button', { name: /^6\s*Validar$/ }));
+
+    const correctionButtons = screen.getAllByRole('button', { name: /^Corregir / });
+    expect(correctionButtons.length).toBeGreaterThan(20);
+    const target = correctionButtons.find((button) => {
+      const label = button.getAttribute('aria-label') ?? '';
+      return label.includes('Falta frente.') && label.includes('07:00-07:15 · Norte');
+    });
+    expect(target).toBeDefined();
+    fireEvent.click(target!);
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Tabla unica de aforo' })).toBeInTheDocument();
+      expect(screen.getByLabelText('Frente · 07:00-07:15 · Norte')).toHaveFocus();
+    });
+  });
+
   it('keeps signal warnings separate and navigates back to Semaforo', () => {
     renderWithIntersection();
     fireEvent.click(screen.getByRole('button', { name: /^4\s*Semaforo$/ }));
