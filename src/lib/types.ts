@@ -2,6 +2,7 @@ export type MovementKey = 'left' | 'through' | 'right' | 'uTurn';
 export type StudySource = 'observed' | 'estimated_tdpa';
 export type RowState = 'complete' | 'incomplete' | 'error';
 export type StudyStatus = 'draft' | 'incomplete' | 'validated' | 'exported';
+export type SaturationSource = 'measured' | 'estimated' | 'unknown';
 
 export type VerificationStatus = 'verified' | 'pending';
 
@@ -58,6 +59,7 @@ export interface SignalMovementAssignment {
   phaseId: string;
   lanes: number | null;
   saturationFlowPerLane: number | null;
+  saturationSource: SaturationSource;
   effectiveGreenSeconds: number | null;
 }
 
@@ -111,7 +113,6 @@ export interface StudyMetadata {
   intervalMinutes: number;
   surveyor: string;
   weather: string;
-  observedSaturationFlowPerLane: NumericCaptureValue;
   notes: string;
 }
 
@@ -273,5 +274,5 @@ export interface StoredState {
 }
 
 export interface VersionedStoredState extends StoredState {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
 }
