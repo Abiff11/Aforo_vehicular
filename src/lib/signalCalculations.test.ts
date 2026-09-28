@@ -75,6 +75,7 @@ const assignment: SignalMovementAssignment = {
   phaseId: 'phase-1',
   lanes: 2,
   saturationFlowPerLane: 1800,
+  saturationSource: 'measured',
   effectiveGreenSeconds: 40,
 };
 
