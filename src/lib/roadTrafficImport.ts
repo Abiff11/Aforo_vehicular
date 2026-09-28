@@ -77,6 +77,20 @@ export interface CorridorTrafficStudy {
   study: Study;
 }
 
+export interface CorridorTrafficAssignment {
+  intersection: Intersection;
+  record: RoadTrafficRecord;
+  distanceMeters: number;
+}
+
+export interface RoadTrafficCorridorAnalysis {
+  sourceIntersection: Intersection;
+  corridorName: string;
+  records: RoadTrafficRecord[];
+  intersections: Intersection[];
+  assignments: CorridorTrafficAssignment[];
+}
+
 function normalizeFraction(value: number): number {
   return value > 1 ? value / 100 : value;
 }
@@ -158,6 +172,99 @@ function findNearestIntersection(intersections: Intersection[], record: RoadTraf
 
   if (!nearest) throw new Error('No hay intersecciones configuradas para asociar el CSV.');
   return nearest.intersection;
+}
+
+function findNearestRoadTrafficRecord(
+  records: RoadTrafficRecord[],
+  intersection: Pick<Intersection, 'latitude' | 'longitude'>,
+): { record: RoadTrafficRecord; distanceMeters: number } {
+  const nearest = records.reduce<{ record: RoadTrafficRecord; distanceMeters: number } | null>((best, record) => {
+    const distanceMeters = calculateDistanceMeters(intersection, {
+      latitude: record.latitude,
+      longitude: record.longitude,
+    });
+    if (!best || distanceMeters < best.distanceMeters) return { record, distanceMeters };
+    return best;
+  }, null);
+
+  if (!nearest) throw new Error('El CSV no contiene registros TDPA para analizar.');
+  return nearest;
+}
+
+function getRoadRecordIdentity(record: RoadTrafficRecord): string {
+  const roadKey = normalizeText(record.roadKey);
+  if (roadKey) return `road-key:${roadKey}`;
+
+  const route = normalizeText(record.route);
+  if (route) return `route:${route}`;
+
+  const road = normalizeText(record.road);
+  if (road) return `road:${road}`;
+
+  throw new Error('El registro TDPA no contiene carretera, clave ni ruta para identificar el tramo.');
+}
+
+function findLinkedCorridorIntersections(intersections: Intersection[], sourceIntersectionId: string): Intersection[] {
+  const byId = new Map(intersections.map((intersection) => [intersection.id, intersection]));
+  const source = byId.get(sourceIntersectionId);
+  if (!source) throw new Error(`Interseccion origen no encontrada: ${sourceIntersectionId}`);
+
+  const visited = new Set<string>();
+  const pending = [source.id];
+
+  while (pending.length > 0) {
+    const currentId = pending.shift();
+    if (!currentId || visited.has(currentId)) continue;
+    const current = byId.get(currentId);
+    if (!current) continue;
+
+    visited.add(currentId);
+    const outgoing = current.relatedIntersectionIds ?? [];
+    const incoming = intersections
+      .filter((candidate) => (candidate.relatedIntersectionIds ?? []).includes(currentId))
+      .map((candidate) => candidate.id);
+
+    [...outgoing, ...incoming].forEach((relatedId) => {
+      if (byId.has(relatedId) && !visited.has(relatedId)) pending.push(relatedId);
+    });
+  }
+
+  return intersections
+    .filter((intersection) => visited.has(intersection.id))
+    .sort((left, right) => left.mapNumber - right.mapNumber);
+}
+
+export function analyzeRoadTrafficCorridor(
+  records: RoadTrafficRecord[],
+  intersections: Intersection[],
+  sourceIntersectionId: string,
+): RoadTrafficCorridorAnalysis {
+  const sourceIntersection = intersections.find((intersection) => intersection.id === sourceIntersectionId);
+  if (!sourceIntersection) throw new Error(`Interseccion origen no encontrada: ${sourceIntersectionId}`);
+  if (records.length === 0) throw new Error('El CSV no contiene registros TDPA para analizar.');
+
+  const anchor = findNearestRoadTrafficRecord(records, sourceIntersection).record;
+  const corridorIdentity = getRoadRecordIdentity(anchor);
+  const corridorRecords = records
+    .filter((record) => getRoadRecordIdentity(record) === corridorIdentity)
+    .sort((left, right) => left.kilometer - right.kilometer);
+  const corridorIntersections = findLinkedCorridorIntersections(intersections, sourceIntersectionId);
+  const assignments = corridorIntersections.map((intersection) => {
+    const nearest = findNearestRoadTrafficRecord(corridorRecords, intersection);
+    return {
+      intersection,
+      record: nearest.record,
+      distanceMeters: nearest.distanceMeters,
+    };
+  });
+
+  return {
+    sourceIntersection,
+    corridorName: anchor.road.trim() || anchor.route.trim() || anchor.roadKey.trim(),
+    records: corridorRecords,
+    intersections: corridorIntersections,
+    assignments,
+  };
 }
 
 function getCorridorSegment(intersections: Intersection[], source: Intersection): string {

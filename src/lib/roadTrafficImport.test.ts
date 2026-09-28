@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { intersections } from '../data/intersections';
 import {
+  analyzeRoadTrafficCorridor,
   calculateRoadTrafficProfile,
   createCorridorTrafficStudies,
   createIntersectionTrafficEstimate,
@@ -12,9 +13,67 @@ import {
 } from './roadTrafficImport';
 import { calculateStudySummary } from './calculations';
 import { createDefaultStudy } from './study';
+import type { Intersection } from './types';
 
 const sourceCsv = `CARRETERA,"CLAVE CARRETERA",RUTA,"PUNTO GENERADOR",KM,TIPO,SC,TDPA2024,M,A,B,C2,C3,T3S2,T3S3,T3S2R4,OTROS,AUTOS,AUTOBUSES,CAMIONES,D,K',LAT,LONG
 "Huajuapan de León - Oaxaca",20056,MEX-190,"T. Aut. Cuacnopalan - Oaxaca",181.8,3,1,24977,10.6,80.5,2,3.1,1.2,0.9,0.5,0.8,0.4,91.1,2,6.9,0.511,0.076,17.139925,-96.776604
+`;
+
+const linkedIntersections: Intersection[] = [
+  {
+    id: 'INT-A',
+    mapNumber: 1,
+    name: 'Carretera A / Calle 1',
+    municipality: 'Oaxaca de Juárez',
+    locality: 'Oaxaca de Juárez',
+    verificationStatus: 'verified',
+    latitude: 17.0000,
+    longitude: -96.7000,
+    notes: '',
+    relatedIntersectionIds: ['INT-B'],
+  },
+  {
+    id: 'INT-B',
+    mapNumber: 2,
+    name: 'Carretera A / Calle 2',
+    municipality: 'Oaxaca de Juárez',
+    locality: 'Oaxaca de Juárez',
+    verificationStatus: 'verified',
+    latitude: 17.0100,
+    longitude: -96.7000,
+    notes: '',
+    relatedIntersectionIds: ['INT-C'],
+  },
+  {
+    id: 'INT-C',
+    mapNumber: 3,
+    name: 'Carretera A / Calle 3',
+    municipality: 'Oaxaca de Juárez',
+    locality: 'Oaxaca de Juárez',
+    verificationStatus: 'verified',
+    latitude: 17.0200,
+    longitude: -96.7000,
+    notes: '',
+    relatedIntersectionIds: [],
+  },
+  {
+    id: 'INT-D',
+    mapNumber: 4,
+    name: 'Carretera A / Calle no vinculada',
+    municipality: 'Oaxaca de Juárez',
+    locality: 'Oaxaca de Juárez',
+    verificationStatus: 'verified',
+    latitude: 17.0300,
+    longitude: -96.7000,
+    notes: '',
+    relatedIntersectionIds: [],
+  },
+];
+
+const multiRoadCsv = `CARRETERA,"CLAVE CARRETERA",RUTA,"PUNTO GENERADOR",KM,TDPA2026,M,AUTOS,AUTOBUSES,CAMIONES,D,K',LAT,LONG
+"Carretera A",A-001,RUTA-A,"Punto A1",10,20000,10,85,2,3,0.52,0.08,17.0002,-96.7000
+"Carretera A",A-001,RUTA-A,"Punto A2",20,24000,10,85,2,3,0.52,0.08,17.0102,-96.7000
+"Carretera B",B-001,RUTA-B,"Punto B1",5,50000,10,85,2,3,0.52,0.08,18.0000,-97.0000
 `;
 
 describe('road traffic import', () => {
@@ -52,6 +111,37 @@ describe('road traffic import', () => {
       'INT-016',
       'INT-018',
     ]);
+  });
+
+  it('uses the linked-intersection graph as the exact corridor scope', () => {
+    const records = parseRoadTrafficCsv(multiRoadCsv);
+    const analysis = analyzeRoadTrafficCorridor(records, linkedIntersections, 'INT-C');
+
+    expect(analysis.intersections.map((intersection) => intersection.id)).toEqual(['INT-A', 'INT-B', 'INT-C']);
+    expect(analysis.intersections.some((intersection) => intersection.id === 'INT-D')).toBe(false);
+  });
+
+  it('selects the source road group and assigns each linked intersection its nearest TDPA record', () => {
+    const records = parseRoadTrafficCsv(multiRoadCsv);
+    const analysis = analyzeRoadTrafficCorridor(records, linkedIntersections, 'INT-A');
+
+    expect(analysis.corridorName).toBe('Carretera A');
+    expect(analysis.records.map((record) => record.point)).toEqual(['Punto A1', 'Punto A2']);
+    expect(analysis.assignments.map(({ intersection, record }) => [intersection.id, record.point])).toEqual([
+      ['INT-A', 'Punto A1'],
+      ['INT-B', 'Punto A2'],
+      ['INT-C', 'Punto A2'],
+    ]);
+    expect(analysis.assignments.every(({ distanceMeters }) => distanceMeters >= 0)).toBe(true);
+  });
+
+  it('reuses one TDPA record for every linked intersection when the file contains a single usable point', () => {
+    const [record] = parseRoadTrafficCsv(sourceCsv);
+    const analysis = analyzeRoadTrafficCorridor([record], linkedIntersections, 'INT-A');
+
+    expect(analysis.records).toHaveLength(1);
+    expect(analysis.assignments).toHaveLength(3);
+    expect(analysis.assignments.every((assignment) => assignment.record.point === record.point)).toBe(true);
   });
 
   it('validates configurable movement percentages as exactly 100 percent', () => {
