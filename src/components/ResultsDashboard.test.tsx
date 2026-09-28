@@ -46,7 +46,7 @@ describe('ResultsDashboard calculation integrity', () => {
     expect(screen.getByText('N/D — configure grupos movimiento–fase para calcular capacidad y v/c.')).toBeInTheDocument();
   });
 
-  it('renders TDPA in a separate estimate panel without observed charts', () => {
+  it('renders TDPA in a separate estimate panel without observed charts when the study is estimate-only', () => {
     const [record] = parseRoadTrafficCsv(roadTrafficCsv);
     const { study } = createTrafficStudyForIntersection(record, intersections[0]);
     const summary = calculateStudySummary(
@@ -75,5 +75,39 @@ describe('ResultsDashboard calculation integrity', () => {
     expect(screen.getByText('1,898')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Volumen por intervalo' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Aforo consolidado por intervalo' })).not.toBeInTheDocument();
+  });
+
+  it('shows TDPA as an independent panel without hiding an existing observed dashboard', () => {
+    const [record] = parseRoadTrafficCsv(roadTrafficCsv);
+    const base = createDefaultStudy('INT-001');
+    const observed = {
+      ...base,
+      rows: base.rows.map((row, index) => index === 0 ? { ...row, through: 25 } : row),
+    };
+    const { study } = createTrafficStudyForIntersection(record, intersections[0], observed);
+    const summary = calculateStudySummary(
+      study.rows,
+      study.configurationSnapshot.accesses,
+      study.metadata.intervalMinutes,
+      {
+        programs: study.configurationSnapshot.programs,
+        assignments: study.configurationSnapshot.signalMovementAssignments ?? [],
+      },
+    );
+
+    render(
+      <ResultsDashboard
+        summary={summary}
+        intervalMinutes={study.metadata.intervalMinutes}
+        source={study.source}
+        tdpaEstimate={study.tdpaEstimate ?? null}
+        legacyUnverified={false}
+      />,
+    );
+
+    expect(study.source).toBe('observed');
+    expect(screen.getByRole('heading', { name: 'Volumen por intervalo' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Estimación TDPA' })).toBeInTheDocument();
+    expect(screen.getByText('ESTIMACIÓN TDPA — NO SUSTITUYE UN AFORO DE INTERSECCIÓN EN CAMPO.')).toBeInTheDocument();
   });
 });
