@@ -4,13 +4,42 @@ import { calculateRowMotorizedTotal, calculateStudySummary } from './calculation
 
 const INCOMPLETE_WARNING = 'ESTUDIO INCOMPLETO — RESULTADOS PARCIALES — NO UTILIZAR COMO RESULTADO DEFINITIVO';
 const TDPA_WARNING = 'ESTIMACIÓN TDPA — NO SUSTITUYE UN AFORO DE INTERSECCIÓN EN CAMPO.';
+const TABLE_HEADER_ROW = 3;
+const EXECUTIVE_SUBTITLE = 'Aforo vehicular · reporte técnico ejecutivo';
+
+const EXECUTIVE_MARGINS: XLSX.MarginInfo = {
+  left: 0.3,
+  right: 0.3,
+  top: 0.5,
+  bottom: 0.5,
+  header: 0.2,
+  footer: 0.2,
+};
 
 function rowsToSheet(
   rows: Array<Record<string, string | number | null>>,
-  widths?: number[],
+  widths: number[] | undefined,
+  title: string,
+  subtitle = EXECUTIVE_SUBTITLE,
 ): XLSX.WorkSheet {
-  const sheet = XLSX.utils.json_to_sheet(rows.map((row) => sanitizeRow(row)));
+  const sanitizedRows = rows.map((row) => sanitizeRow(row));
+  const headerCount = sanitizedRows[0] ? Object.keys(sanitizedRows[0]).length : 0;
+  const lastColumn = Math.max((widths?.length ?? headerCount) - 1, 0);
+  const sheet = XLSX.utils.aoa_to_sheet([[title], [subtitle], []]);
+
+  if (sanitizedRows.length > 0) {
+    XLSX.utils.sheet_add_json(sheet, sanitizedRows, { origin: 'A4' });
+    const lastDataRow = TABLE_HEADER_ROW + sanitizedRows.length + 1;
+    sheet['!autofilter'] = { ref: `A4:${XLSX.utils.encode_col(Math.max(headerCount - 1, 0))}${lastDataRow}` };
+  }
+
+  sheet['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: lastColumn } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: lastColumn } },
+  ];
   if (widths) sheet['!cols'] = widths.map((wch) => ({ wch }));
+  sheet['!rows'] = [{ hpt: 28 }, { hpt: 18 }, { hpt: 8 }, { hpt: 22 }];
+  sheet['!margins'] = EXECUTIVE_MARGINS;
   return sheet;
 }
 
@@ -201,7 +230,17 @@ function buildFichaSheet(study: Study, intersection: Intersection, summary: Stud
     { s: { r: 0, c: 0 }, e: { r: 0, c: lastColumn } },
     ...sectionRows.map((row) => ({ s: { r: row, c: 0 }, e: { r: row, c: lastColumn } })),
   ];
-  sheet['!cols'] = Array.from({ length: lastColumn + 1 }, (_, index) => ({ wch: index === 0 ? 28 : index === 11 ? 18 : 20 }));
+  sheet['!cols'] = [
+    { wch: 30 }, { wch: 22 }, { wch: 4 }, { wch: 24 }, { wch: 20 }, { wch: 20 },
+    { wch: 20 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 34 }, { wch: 16 },
+  ];
+  sheet['!rows'] = Array.from({ length: rows.length }, (_, row) => {
+    if (row === 0) return { hpt: 30 };
+    if (sectionRows.includes(row)) return { hpt: 22 };
+    if (rows[row]?.length === 0) return { hpt: 8 };
+    return { hpt: 18 };
+  });
+  sheet['!margins'] = EXECUTIVE_MARGINS;
   return sheet;
 }
 
@@ -288,9 +327,8 @@ function buildIndicatorsRows(summary: StudySummary): Array<Record<string, string
 }
 
 function applyDashboardFormats(sheet: XLSX.WorkSheet): void {
-  sheet['!cols'] = [{ wch: 34 }, { wch: 24 }, { wch: 22 }];
   const range = XLSX.utils.decode_range(sheet['!ref'] ?? 'A1:A1');
-  for (let row = range.s.r + 1; row <= range.e.r; row += 1) {
+  for (let row = TABLE_HEADER_ROW + 1; row <= range.e.r; row += 1) {
     const indicatorCell = sheet[XLSX.utils.encode_cell({ r: row, c: 0 })];
     const valueCell = sheet[XLSX.utils.encode_cell({ r: row, c: 1 })];
     if (indicatorCell?.v === 'Completitud (%)' && valueCell?.t === 'n') valueCell.z = '0.0';
@@ -299,17 +337,16 @@ function applyDashboardFormats(sheet: XLSX.WorkSheet): void {
 }
 
 function applyIndicatorFormats(sheet: XLSX.WorkSheet): void {
-  sheet['!cols'] = Array.from({ length: 18 }, (_, index) => ({ wch: index < 5 ? 18 : 16 }));
   const range = XLSX.utils.decode_range(sheet['!ref'] ?? 'A1:A1');
   const headers = new Map<string, number>();
   for (let col = range.s.c; col <= range.e.c; col += 1) {
-    const cell = sheet[XLSX.utils.encode_cell({ r: 0, c: col })];
+    const cell = sheet[XLSX.utils.encode_cell({ r: TABLE_HEADER_ROW, c: col })];
     if (typeof cell?.v === 'string') headers.set(cell.v, col);
   }
   for (const label of ['g/C', 'v/c']) {
     const col = headers.get(label);
     if (col === undefined) continue;
-    for (let row = 1; row <= range.e.r; row += 1) {
+    for (let row = TABLE_HEADER_ROW + 1; row <= range.e.r; row += 1) {
       const cell = sheet[XLSX.utils.encode_cell({ r: row, c: col })];
       if (cell?.t === 'n') cell.z = '0.000';
     }
@@ -327,10 +364,22 @@ export function exportStudyWorkbook(study: Study, intersection: Intersection): X
     },
   );
   const workbook = XLSX.utils.book_new();
+  const subtitle = `${intersection.name} · ${study.metadata.date} · ${sourceLabel(study)} · ${statusLabel(study, summary)}`;
+  workbook.Props = {
+    Title: `Aforo vehicular - ${intersection.name}`,
+    Subject: 'Estudio de aforo vehicular en intersección semaforizada',
+    Author: 'Aforos Intersecciones',
+    Comments: 'Libro generado desde un único StudySummary; Capturado, Calculado y Estimado conservan semánticas separadas.',
+  };
 
   XLSX.utils.book_append_sheet(workbook, buildFichaSheet(study, intersection, summary), '01_FICHA_TECNICA');
 
-  const dashboardSheet = rowsToSheet(buildDashboardRows(study, summary));
+  const dashboardSheet = rowsToSheet(
+    buildDashboardRows(study, summary),
+    [36, 24, 24],
+    'RESUMEN EJECUTIVO DEL ESTUDIO',
+    subtitle,
+  );
   applyDashboardFormats(dashboardSheet);
   XLSX.utils.book_append_sheet(workbook, dashboardSheet, '02_DASHBOARD');
 
@@ -366,7 +415,9 @@ export function exportStudyWorkbook(study: Study, intersection: Intersection): X
         EstadoFila: state,
       };
     }),
-    [16, 20, 20, 14, 12, 12, 12, 12, 12, 14, 12, 12, 12, 12, 14, 14, 14, 18, 16, 20, 28, 14],
+    [16, 20, 20, 14, 12, 12, 12, 12, 12, 14, 12, 12, 12, 12, 14, 14, 14, 18, 16, 20, 32, 14],
+    'AFORO DETALLADO',
+    subtitle,
   );
   XLSX.utils.book_append_sheet(workbook, detailedSheet, '03_AFORO_DETALLADO');
 
@@ -433,7 +484,12 @@ export function exportStudyWorkbook(study: Study, intersection: Intersection): X
   ];
   XLSX.utils.book_append_sheet(
     workbook,
-    rowsToSheet(programmingRows, [24, 18, 12, 12, 12, 10, 18, 12, 12, 12, 20, 18, 18, 16, 18, 20, 30]),
+    rowsToSheet(
+      programmingRows,
+      [24, 18, 12, 12, 12, 10, 18, 12, 12, 12, 20, 18, 18, 16, 18, 20, 30],
+      'PROGRAMACIÓN SEMAFÓRICA',
+      subtitle,
+    ),
     '04_PROGRAMACION',
   );
 
@@ -449,12 +505,19 @@ export function exportStudyWorkbook(study: Study, intersection: Intersection): X
         DetenidosPorCiclo: queue.stoppedVehiclesPerCycle,
         Observaciones: queue.notes || null,
       })),
-      [20, 12, 14, 14, 16, 20, 30],
+      [22, 12, 16, 16, 18, 20, 34],
+      'COLAS Y OPERACIÓN',
+      subtitle,
     ),
     '05_COLAS_OPERACION',
   );
 
-  const indicatorsSheet = rowsToSheet(buildIndicatorsRows(summary));
+  const indicatorsSheet = rowsToSheet(
+    buildIndicatorsRows(summary),
+    Array.from({ length: 18 }, (_, index) => (index < 5 ? 20 : 16)),
+    'INDICADORES SEMAFÓRICOS',
+    subtitle,
+  );
   applyIndicatorFormats(indicatorsSheet);
   XLSX.utils.book_append_sheet(workbook, indicatorsSheet, '06_INDICADORES');
 
@@ -470,7 +533,7 @@ export function exportStudyWorkbook(study: Study, intersection: Intersection): X
       { Tema: 'Verde efectivo', Descripcion: 'No se infiere del verde programado; se captura por grupo movimiento–fase.' },
       { Tema: 'Capacidad', Descripcion: 'c = s × N × g/C por grupo movimiento–fase; no se calcula capacidad agregada de toda la intersección.' },
       { Tema: 'TDPA', Descripcion: 'TDPA × K\' y D producen estimaciones de hora de diseño; no sustituyen un aforo de intersección.' },
-    ], [24, 100]),
+    ], [26, 100], 'INSTRUCTIVO TÉCNICO', 'Criterios de lectura, trazabilidad y alcance del libro'),
     '07_INSTRUCTIVO',
   );
 
