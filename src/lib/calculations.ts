@@ -217,8 +217,13 @@ export function calculateStudySummary(
   const errorRows = rowValidation.filter((result) => result.state === 'error').length;
   const completionPercent = rows.length > 0 ? (completeRows / rows.length) * 100 : 0;
   const isComplete = rows.length > 0 && completeRows === rows.length && errorRows === 0;
+  const accessForRow = (row: CaptureRow) => accessById.get(row.accessId) ?? fallbackAccess;
+  const movementValueForRow = (row: CaptureRow, movement: MovementKey) => {
+    const access = accessForRow(row);
+    return access?.movements[movement] ? valueOrZero(row[movement]) : 0;
+  };
   const totalForRow = (row: CaptureRow) => {
-    const access = accessById.get(row.accessId) ?? fallbackAccess;
+    const access = accessForRow(row);
     return access ? calculateRowMotorizedTotal(row, access) : 0;
   };
 
@@ -237,10 +242,10 @@ export function calculateStudySummary(
       label: first.intervalLabel,
       start: first.intervalStart,
       end: first.intervalEnd,
-      left: groupedRows.reduce((total, row) => total + valueOrZero(row.left), 0),
-      through: groupedRows.reduce((total, row) => total + valueOrZero(row.through), 0),
-      right: groupedRows.reduce((total, row) => total + valueOrZero(row.right), 0),
-      uTurn: groupedRows.reduce((total, row) => total + valueOrZero(row.uTurn), 0),
+      left: groupedRows.reduce((total, row) => total + movementValueForRow(row, 'left'), 0),
+      through: groupedRows.reduce((total, row) => total + movementValueForRow(row, 'through'), 0),
+      right: groupedRows.reduce((total, row) => total + movementValueForRow(row, 'right'), 0),
+      uTurn: groupedRows.reduce((total, row) => total + movementValueForRow(row, 'uTurn'), 0),
       total: groupedRows.reduce((total, row) => total + totalForRow(row), 0),
       heavy: groupedRows.reduce((total, row) => total + valueOrZero(row.heavy), 0),
       motorcycles: groupedRows.reduce((total, row) => total + valueOrZero(row.motorcycles), 0),
@@ -300,7 +305,7 @@ export function calculateStudySummary(
   }));
 
   const byMovement = movementKeys.map((key) => {
-    const volume = rows.reduce((total, row) => total + valueOrZero(row[key]), 0);
+    const volume = rows.reduce((total, row) => total + movementValueForRow(row, key), 0);
     return { movement: movementLabels[key], volume, percent: totalMotorized > 0 ? (volume / totalMotorized) * 100 : 0 };
   });
 
