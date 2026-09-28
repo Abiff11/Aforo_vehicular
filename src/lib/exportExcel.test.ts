@@ -154,8 +154,15 @@ describe('exportStudyWorkbook calculation integrity', () => {
     const dashboard = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets['02_DASHBOARD']);
     const ficha = XLSX.utils.sheet_to_json<Array<string | number>>(workbook.Sheets['01_FICHA_TECNICA'], { header: 1, defval: '' });
     const indicatorMap = new Map(dashboard.map((row) => [row.Indicador, row.Valor]));
+    const observedSummary = ficha.find((row) =>
+      row[0] === 'Volumen registrado parcial:' || row[0] === 'Volumen total observado:' || row[0] === 'Volumen observado:',
+    );
+    const leftMovementSummary = ficha.find((row) => row[3] === 'Izquierda');
 
     expect(ficha.some((row) => row.includes('ESTIMACIÓN TDPA — NO SUSTITUYE UN AFORO DE INTERSECCIÓN EN CAMPO.'))).toBe(true);
+    expect(observedSummary?.[1]).toBe('N/D');
+    expect(leftMovementSummary?.[4]).toBe('N/D');
+    expect(leftMovementSummary?.[5]).toBe('N/D');
     expect(indicatorMap.get('Fuente')).toBe('Estimación TDPA');
     expect(indicatorMap.get('TDPA')).toBe(24977);
     expect(indicatorMap.get("K'")).toBe(0.076);
