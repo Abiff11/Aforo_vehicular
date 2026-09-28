@@ -271,12 +271,31 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(screen.getByText('Estado del estudio: Incompleto')).toBeInTheDocument();
   });
 
-  it('links TDPA as an estimate rather than an observed aforo', async () => {
+  it('keeps TDPA import in Interseccion and guides the user through the steps in order', async () => {
     renderWithIntersection();
     fireEvent.change(screen.getByLabelText('Importar CSV TDPA'), {
       target: { files: [new File([roadTrafficCsv], 'tdpa.csv', { type: 'text/csv' })] },
     });
     await waitFor(() => expect(screen.getByText('tdpa.csv vinculado')).toBeInTheDocument());
+
+    expect(screen.getByRole('heading', { name: 'Intersecciones de trabajo' })).toBeInTheDocument();
+    const importGuide = screen.getByRole('status', { name: 'Guía posterior a importación TDPA' });
+    expect(importGuide).toHaveTextContent('CSV TDPA vinculado');
+    expect(importGuide).toHaveTextContent('Configuración');
+    expect(screen.getByRole('status', { name: 'Proceso guiado TDPA' })).toHaveTextContent('Configuracion');
+    expect(screen.getByRole('button', { name: /^4\s*Semaforo$/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^7\s*Resultados$/ })).toBeDisabled();
+    expect(screen.queryByRole('heading', { name: 'Estimación TDPA' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar a Configuracion' }));
+    expect(screen.getByRole('heading', { name: 'Configuracion de accesos' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^4\s*Semaforo$/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^7\s*Resultados$/ })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar a Semaforo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar a Aforo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar a Validar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar a Resultados' }));
 
     expect(screen.getByText('ESTIMACIÓN TDPA — NO SUSTITUYE UN AFORO DE INTERSECCIÓN EN CAMPO.')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Estimación TDPA' })).toBeInTheDocument();

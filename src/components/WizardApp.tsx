@@ -229,6 +229,8 @@ export function WizardApp() {
   const activeStudy = state.activeStudy ?? createDefaultStudy(UNASSIGNED_INTERSECTION_ID, studyTemplate);
   const selectedIntersection = customIntersections.find((intersection) => intersection.id === activeStudy.intersectionId) ?? null;
   const activeHelp = helpStepIndex === null ? null : wizardSteps[helpStepIndex];
+  const isGuidedTdpaStudy = (activeStudy.source ?? 'observed') === 'estimated_tdpa' && Boolean(selectedIntersection?.linkedCsvFileName);
+  const nextWizardStep = wizardSteps[activeStudy.currentStep + 1] ?? null;
 
   const summary = useMemo(
     () =>
@@ -473,6 +475,8 @@ export function WizardApp() {
 
       const linkedIntersection = { ...selectedIntersection, linkedCsvFileName: file.name };
       const imported = createTrafficStudyForIntersection(record, linkedIntersection, activeStudy);
+      const guidedStudy = { ...imported.study, currentStep: 1 };
+      const guidedImport = { ...imported, study: guidedStudy };
       const nextIntersections = customIntersections.map((intersection) =>
         intersection.id === linkedIntersection.id ? linkedIntersection : intersection,
       );
@@ -482,14 +486,14 @@ export function WizardApp() {
         corridorName: linkedIntersection.name,
         point: record.point,
         profile: calculateRoadTrafficProfile(record),
-        studies: [imported],
+        studies: [guidedImport],
       });
       setRoadTrafficImportError(null);
       persist({
         ...state,
         customIntersections: nextIntersections,
-        activeStudy: imported.study,
-        studiesByIntersection: { ...studiesByIntersection, [linkedIntersection.id]: imported.study },
+        activeStudy: guidedStudy,
+        studiesByIntersection: { ...studiesByIntersection, [linkedIntersection.id]: guidedStudy },
       });
     } catch (error) {
       setRoadTrafficImport(null);
@@ -497,9 +501,16 @@ export function WizardApp() {
     }
   }
 
+  function canNavigateToStep(index: number): boolean {
+    if (!selectedIntersection && index > 1) return false;
+    if (isGuidedTdpaStudy && index > activeStudy.currentStep + 1) return false;
+    return true;
+  }
+
   function goToStep(index: number): void {
-    if (!selectedIntersection && index > 1) return;
-    setActiveStudy({ ...activeStudy, currentStep: Math.max(0, Math.min(index, wizardSteps.length - 1)) });
+    const target = Math.max(0, Math.min(index, wizardSteps.length - 1));
+    if (!canNavigateToStep(target)) return;
+    setActiveStudy({ ...activeStudy, currentStep: target });
   }
 
   function focusCaptureIssue(rowId: string, issue: string): void {
@@ -660,15 +671,38 @@ export function WizardApp() {
       </header>
 
       <nav className="stepper" aria-label="Progreso">
-        {wizardSteps.map((step, index) => (
-          <div className={index === activeStudy.currentStep ? 'step active' : index < activeStudy.currentStep ? 'step done' : 'step'} key={step.label}>
-            <button className="step-main" onClick={() => goToStep(index)} type="button"><span>{index + 1}</span>{step.label}</button>
-            <button aria-label={`Ayuda para ${step.label}`} className="step-help" onClick={() => setHelpStepIndex(index)} title={`Ayuda: ${step.label}`} type="button">
-              <CircleHelp size={17} />
-            </button>
-          </div>
-        ))}
+        {wizardSteps.map((step, index) => {
+          const navigationAllowed = canNavigateToStep(index);
+          return (
+            <div className={index === activeStudy.currentStep ? 'step active' : index < activeStudy.currentStep ? 'step done' : 'step'} key={step.label}>
+              <button
+                className="step-main"
+                disabled={!navigationAllowed}
+                onClick={() => goToStep(index)}
+                title={!navigationAllowed ? 'Continúa primero con el paso anterior del proceso TDPA.' : undefined}
+                type="button"
+              >
+                <span>{index + 1}</span>{step.label}
+              </button>
+              <button aria-label={`Ayuda para ${step.label}`} className="step-help" onClick={() => setHelpStepIndex(index)} title={`Ayuda: ${step.label}`} type="button">
+                <CircleHelp size={17} />
+              </button>
+            </div>
+          );
+        })}
       </nav>
+
+      {isGuidedTdpaStudy && (
+        <div
+          aria-label="Proceso guiado TDPA"
+          role="status"
+          style={{ background: 'var(--navy-50)', borderLeft: '3px solid var(--navy-600)', margin: '12px 28px 0', padding: '10px 12px' }}
+        >
+          <strong>Proceso TDPA guiado.</strong>{' '}
+          Avanza en orden para revisar cada decisión antes de llegar a resultados.
+          {nextWizardStep && <> Siguiente etapa: <strong>{nextWizardStep.label}</strong>.</>}
+        </div>
+      )}
 
       {activeHelp && (
         <div className="help-backdrop" role="presentation" onClick={() => setHelpStepIndex(null)}>
@@ -768,6 +802,20 @@ export function WizardApp() {
                     <small>El CSV genera una estimación TDPA independiente. No crea giros, peatones, bicicletas, intervalos de 15 min ni FHP observado.</small>
                   </div>
                   {roadTrafficImportError && <p className="warning"><AlertTriangle size={16} />{roadTrafficImportError}</p>}
+                  {(activeStudy.source ?? 'observed') === 'estimated_tdpa' && selectedIntersection.linkedCsvFileName && (
+                    <div
+                      aria-label="Guía posterior a importación TDPA"
+                      className="result"
+                      role="status"
+                      style={{ display: 'block', marginTop: 12 }}
+                    >
+                      <strong>CSV TDPA vinculado. No se saltará ninguna etapa.</strong>
+                      <p><strong>Qué ocurrió:</strong> el sistema reconoció el registro TDPA y lo vinculó a esta intersección como fuente de estimación, no como conteo observado.</p>
+                      <p><strong>Antes de continuar:</strong> verifica el punto, el nombre del cruce y las intersecciones relacionadas que forman parte del mismo tramo.</p>
+                      <p><strong>Ahora continúa a Configuración:</strong> allí definirás accesos, sentidos del corredor y el reparto de giros que permitirá transformar el volumen TDPA en una estimación por movimiento.</p>
+                      <small>Los intervalos de aforo todavía no se rellenan en este paso.</small>
+                    </div>
+                  )}
                 </>
               )}
             </aside>
@@ -1176,7 +1224,7 @@ export function WizardApp() {
         <button disabled={activeStudy.currentStep === 0} onClick={() => goToStep(activeStudy.currentStep - 1)} type="button"><ArrowLeft size={16} /> Anterior</button>
         <span>{selectedIntersection ? `${selectedIntersection.id} · ${selectedIntersection.name || 'Sin nombre'}` : 'Datos generales del estudio'}</span>
         <button disabled={activeStudy.currentStep === wizardSteps.length - 1 || (activeStudy.currentStep >= 1 && !selectedIntersection)} onClick={() => goToStep(activeStudy.currentStep + 1)} type="button">
-          Siguiente <ArrowRight size={16} />
+          {nextWizardStep ? `Continuar a ${nextWizardStep.label}` : 'Siguiente'} <ArrowRight size={16} />
         </button>
       </footer>
     </main>
