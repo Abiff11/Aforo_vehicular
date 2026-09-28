@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import type { Intersection, Study, StudySummary } from './types';
 import { calculateRowMotorizedTotal, calculateStudySummary } from './calculations';
 
@@ -6,6 +6,16 @@ const INCOMPLETE_WARNING = 'ESTUDIO INCOMPLETO — RESULTADOS PARCIALES — NO U
 const TDPA_WARNING = 'ESTIMACIÓN TDPA — NO SUSTITUYE UN AFORO DE INTERSECCIÓN EN CAMPO.';
 const TABLE_HEADER_ROW = 3;
 const EXECUTIVE_SUBTITLE = 'Aforo vehicular · reporte técnico ejecutivo';
+const TITLE_BLUE = '1F4E78';
+const HEADER_BLUE = '5B9BD5';
+const SECTION_GREEN = '70AD47';
+const SUBTITLE_BLUE = 'D9EAF7';
+const LIGHT_BLUE = 'EAF3F8';
+const BORDER_GRAY = 'BFBFBF';
+const WHITE = 'FFFFFF';
+const TEXT_DARK = '1F1F1F';
+
+type CellStyle = NonNullable<XLSX.CellObject['s']>;
 
 const EXECUTIVE_MARGINS: XLSX.MarginInfo = {
   left: 0.3,
@@ -15,6 +25,121 @@ const EXECUTIVE_MARGINS: XLSX.MarginInfo = {
   header: 0.2,
   footer: 0.2,
 };
+
+const baseBorder: NonNullable<CellStyle['border']> = {
+  top: { style: 'thin', color: { rgb: BORDER_GRAY } },
+  bottom: { style: 'thin', color: { rgb: BORDER_GRAY } },
+  left: { style: 'thin', color: { rgb: BORDER_GRAY } },
+  right: { style: 'thin', color: { rgb: BORDER_GRAY } },
+};
+
+const titleStyle: CellStyle = {
+  font: { name: 'Aptos', sz: 14, bold: true, color: { rgb: WHITE } },
+  fill: { patternType: 'solid', fgColor: { rgb: TITLE_BLUE } },
+  alignment: { horizontal: 'left', vertical: 'center' },
+};
+
+const subtitleStyle: CellStyle = {
+  font: { name: 'Aptos', sz: 10, italic: true, color: { rgb: TEXT_DARK } },
+  fill: { patternType: 'solid', fgColor: { rgb: SUBTITLE_BLUE } },
+  alignment: { horizontal: 'left', vertical: 'center' },
+};
+
+const tableHeaderStyle: CellStyle = {
+  font: { name: 'Aptos', sz: 10, bold: true, color: { rgb: WHITE } },
+  fill: { patternType: 'solid', fgColor: { rgb: HEADER_BLUE } },
+  alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+  border: baseBorder,
+};
+
+const sectionStyle: CellStyle = {
+  font: { name: 'Aptos', sz: 11, bold: true, color: { rgb: WHITE } },
+  fill: { patternType: 'solid', fgColor: { rgb: SECTION_GREEN } },
+  alignment: { horizontal: 'left', vertical: 'center' },
+};
+
+const labelStyle: CellStyle = {
+  font: { name: 'Aptos', sz: 10, bold: true, color: { rgb: TEXT_DARK } },
+  fill: { patternType: 'solid', fgColor: { rgb: LIGHT_BLUE } },
+  alignment: { horizontal: 'left', vertical: 'center' },
+  border: baseBorder,
+};
+
+const valueStyle: CellStyle = {
+  font: { name: 'Aptos', sz: 10, color: { rgb: TEXT_DARK } },
+  alignment: { horizontal: 'left', vertical: 'center' },
+  border: baseBorder,
+};
+
+const numericStyle: CellStyle = {
+  ...valueStyle,
+  alignment: { horizontal: 'right', vertical: 'center' },
+  numFmt: '#,##0',
+};
+
+const decimalStyle: CellStyle = {
+  ...numericStyle,
+  numFmt: '#,##0.000',
+};
+
+function mergeStyle(base: CellStyle | undefined, next: CellStyle): CellStyle {
+  const style: CellStyle = {
+    ...(base ?? {}),
+    ...next,
+    border: next.border ?? base?.border,
+  };
+  if (base?.font || next.font) style.font = { ...(base?.font ?? {}), ...(next.font ?? {}) };
+  if (base?.fill || next.fill) style.fill = { ...(base?.fill ?? {}), ...(next.fill ?? {}) };
+  if (base?.alignment || next.alignment) style.alignment = { ...(base?.alignment ?? {}), ...(next.alignment ?? {}) };
+  return style;
+}
+
+function cellAddress(row: number, col: number): string {
+  return XLSX.utils.encode_cell({ r: row, c: col });
+}
+
+function applyCellStyle(sheet: XLSX.WorkSheet, row: number, col: number, style: CellStyle): void {
+  const address = cellAddress(row, col);
+  const cell = sheet[address];
+  if (!cell) return;
+  cell.s = mergeStyle(cell.s, style);
+}
+
+function applyRowStyle(sheet: XLSX.WorkSheet, row: number, startCol: number, endCol: number, style: CellStyle): void {
+  for (let col = startCol; col <= endCol; col += 1) applyCellStyle(sheet, row, col, style);
+}
+
+function applyRangeStyle(sheet: XLSX.WorkSheet, startRow: number, endRow: number, startCol: number, endCol: number): void {
+  for (let row = startRow; row <= endRow; row += 1) {
+    for (let col = startCol; col <= endCol; col += 1) {
+      const cell = sheet[cellAddress(row, col)];
+      if (!cell) continue;
+      const value = cell.v;
+      const isNumber = typeof value === 'number';
+      const isDecimal = isNumber && !Number.isInteger(value);
+      applyCellStyle(sheet, row, col, isDecimal ? decimalStyle : isNumber ? numericStyle : valueStyle);
+    }
+  }
+}
+
+function applyExecutiveSheetStyle(
+  sheet: XLSX.WorkSheet,
+  options: {
+    headerRow?: number;
+    lastColumn: number;
+    sectionRows?: number[];
+  },
+): void {
+  const range = XLSX.utils.decode_range(sheet['!ref'] ?? 'A1:A1');
+  const lastColumn = Math.max(options.lastColumn, range.e.c);
+  if (range.e.r >= 0) applyRangeStyle(sheet, 0, range.e.r, 0, range.e.c);
+  applyRowStyle(sheet, 0, 0, lastColumn, titleStyle);
+  if (range.e.r >= 1) applyRowStyle(sheet, 1, 0, lastColumn, subtitleStyle);
+  for (const sectionRow of options.sectionRows ?? []) applyRowStyle(sheet, sectionRow, 0, lastColumn, sectionStyle);
+  if (options.headerRow !== undefined) applyRowStyle(sheet, options.headerRow, 0, range.e.c, tableHeaderStyle);
+  sheet['!margins'] = EXECUTIVE_MARGINS;
+  sheet['!outline'] = { summaryBelow: false, summaryRight: false };
+}
 
 function rowsToSheet(
   rows: Array<Record<string, string | number | null>>,
@@ -39,7 +164,7 @@ function rowsToSheet(
   ];
   if (widths) sheet['!cols'] = widths.map((wch) => ({ wch }));
   sheet['!rows'] = [{ hpt: 28 }, { hpt: 18 }, { hpt: 8 }, { hpt: 22 }];
-  sheet['!margins'] = EXECUTIVE_MARGINS;
+  applyExecutiveSheetStyle(sheet, { headerRow: TABLE_HEADER_ROW, lastColumn });
   return sheet;
 }
 
@@ -96,9 +221,14 @@ function shouldShowIncompleteWarning(study: Study, summary: StudySummary): boole
 function buildFichaSheet(study: Study, intersection: Intersection, summary: StudySummary): XLSX.WorkSheet {
   const rows: Array<Array<string | number>> = [];
   const sectionRows: number[] = [];
+  const headerRows: number[] = [];
   const pushSection = (label: string): void => {
     sectionRows.push(rows.length);
     rows.push([label]);
+  };
+  const pushHeader = (header: Array<string | number>): void => {
+    headerRows.push(rows.length);
+    rows.push(header);
   };
   const program = study.configurationSnapshot.programs[0];
   const isObserved = (study.source ?? 'observed') === 'observed';
@@ -133,7 +263,7 @@ function buildFichaSheet(study: Study, intersection: Intersection, summary: Stud
   rows.push([]);
 
   pushSection(`3. AFORO VEHICULAR – INTERVALOS DE ${study.metadata.intervalMinutes} MINUTOS`);
-  rows.push(['Intervalo', 'Izquierda', 'Frente', 'Derecha', 'Retorno', 'Total calculado', 'Pesados', 'Motos', 'Bicicletas', 'Peatones', 'Observaciones']);
+  pushHeader(['Intervalo', 'Izquierda', 'Frente', 'Derecha', 'Retorno', 'Total calculado', 'Pesados', 'Motos', 'Bicicletas', 'Peatones', 'Observaciones']);
   for (const interval of summary.byInterval) {
     const captured = interval.complete === true;
     rows.push([
@@ -180,7 +310,7 @@ function buildFichaSheet(study: Study, intersection: Intersection, summary: Stud
   rows.push([]);
 
   pushSection('5. CONTROL DE COLAS Y OPERACIÓN');
-  rows.push(['Acceso', 'Cola máxima (veh)', 'Cola promedio (veh)', 'Longitud máxima (m)', 'Vehículos detenidos/ciclo', 'Observaciones']);
+  pushHeader(['Acceso', 'Cola máxima (veh)', 'Cola promedio (veh)', 'Longitud máxima (m)', 'Vehículos detenidos/ciclo', 'Observaciones']);
   for (const queue of summary.queueByAccess) {
     rows.push([
       queue.accessName,
@@ -194,7 +324,7 @@ function buildFichaSheet(study: Study, intersection: Intersection, summary: Stud
   rows.push([]);
 
   pushSection('6. INDICADORES SEMAFÓRICOS');
-  rows.push(['Acceso', 'Movimiento', 'Programa', 'Fase', 'Volumen hora pico', 'Saturación', 'Carriles', 'Verde efectivo', 'Ciclo', 'g/C', 'Capacidad', 'v/c']);
+  pushHeader(['Acceso', 'Movimiento', 'Programa', 'Fase', 'Volumen hora pico', 'Saturación', 'Carriles', 'Verde efectivo', 'Ciclo', 'g/C', 'Capacidad', 'v/c']);
   if ((summary.signalGroupIndicators?.length ?? 0) === 0) {
     rows.push(['N/D', 'N/D', 'N/D', 'N/D', 'N/D', 'N/D', 'N/D', 'N/D', 'N/D', 'N/D', 'N/D', 'N/D']);
   } else {
@@ -240,7 +370,17 @@ function buildFichaSheet(study: Study, intersection: Intersection, summary: Stud
     if (rows[row]?.length === 0) return { hpt: 8 };
     return { hpt: 18 };
   });
-  sheet['!margins'] = EXECUTIVE_MARGINS;
+  applyExecutiveSheetStyle(sheet, { lastColumn, sectionRows });
+  for (const rowIndex of headerRows) {
+    if (rows[rowIndex]) applyRowStyle(sheet, rowIndex, 0, Math.max((rows[rowIndex]?.length ?? 1) - 1, 0), tableHeaderStyle);
+  }
+  for (let row = 3; row < rows.length; row += 1) {
+    const currentRow = rows[row];
+    if (!currentRow || sectionRows.includes(row) || currentRow.length === 0) continue;
+    if (typeof currentRow[0] === 'string' && currentRow[0].endsWith(':')) applyCellStyle(sheet, row, 0, labelStyle);
+    if (typeof currentRow[3] === 'string' && currentRow[3].endsWith(':')) applyCellStyle(sheet, row, 3, labelStyle);
+    if (typeof currentRow[6] === 'string' && currentRow[6].endsWith(':')) applyCellStyle(sheet, row, 6, labelStyle);
+  }
   return sheet;
 }
 

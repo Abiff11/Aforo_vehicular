@@ -128,6 +128,19 @@ describe('formal signal calculations', () => {
     expect(summary.signalGroupIndicators?.[0]).toMatchObject({ capacity: null, volumeCapacityRatio: null });
   });
 
+  it('reports invalid program times without crashing the study summary', () => {
+    const invalidProgram = { ...program, endTime: '' };
+    const summary = calculateStudySummary(rows, [access], 15, { programs: [invalidProgram], assignments: [assignment] });
+
+    expect(summary.signalValidationIssues).toContainEqual(expect.objectContaining({
+      code: 'invalid-program-time',
+      programId: 'p1',
+    }));
+    expect(summary.warnings).toContain('El programa Pico AM tiene horario inválido: La hora debe tener formato HH:mm.');
+    expect(summary.cycleSummaries?.[0].programmedCycleSeconds).toBeNull();
+    expect(summary.signalGroupIndicators?.[0]).toMatchObject({ capacity: null, volumeCapacityRatio: null });
+  });
+
   it('calculates formal capacity and v/c only for a complete movement-phase lane group', () => {
     const summary = calculateStudySummary(rows, [access], 15, { programs: [program], assignments: [assignment] });
 

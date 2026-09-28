@@ -23,6 +23,10 @@ function tableRows<T>(sheet: XLSX.WorkSheet): T[] {
   return XLSX.utils.sheet_to_json<T>(sheet, { range: 3 });
 }
 
+function cellStyle(sheet: XLSX.WorkSheet, address: string): Record<string, unknown> | undefined {
+  return (sheet[address] as XLSX.CellObject & { s?: Record<string, unknown> } | undefined)?.s;
+}
+
 function fillCompleteRows(study: Study): Study {
   const peakThrough = new Map(study.intervals.slice(0, 4).map((item, index) => [item.id, [100, 120, 140, 160][index]]));
   return {
@@ -258,6 +262,34 @@ describe('exportStudyWorkbook calculation integrity', () => {
     expect(queues['A1']?.v).toBe('COLAS Y OPERACIÓN');
     expect(indicators['A1']?.v).toBe('INDICADORES SEMAFÓRICOS');
     expect(guide['A1']?.v).toBe('INSTRUCTIVO TÉCNICO');
+    for (const sheet of [ficha, dashboard, detailed, programming, queues, indicators, guide]) {
+      expect(cellStyle(sheet, 'A1')).toMatchObject({
+        font: expect.objectContaining({ bold: true, color: { rgb: 'FFFFFF' } }),
+        fill: expect.objectContaining({ fgColor: { rgb: '1F4E78' } }),
+      });
+    }
+    for (const sheet of [dashboard, detailed, programming, queues, indicators, guide]) {
+      expect(cellStyle(sheet, 'A4')).toMatchObject({
+        font: expect.objectContaining({ bold: true, color: { rgb: 'FFFFFF' } }),
+        fill: expect.objectContaining({ fgColor: { rgb: '5B9BD5' } }),
+      });
+    }
+    expect(cellStyle(ficha, 'A3')).toMatchObject({
+      font: expect.objectContaining({ bold: true, color: { rgb: 'FFFFFF' } }),
+      fill: expect.objectContaining({ fgColor: { rgb: '70AD47' } }),
+    });
+    expect(cellStyle(ficha, 'A14')).toMatchObject({
+      font: expect.objectContaining({ bold: true, color: { rgb: 'FFFFFF' } }),
+      fill: expect.objectContaining({ fgColor: { rgb: '5B9BD5' } }),
+    });
+    expect(cellStyle(ficha, 'B15')).toMatchObject({
+      font: expect.objectContaining({ color: { rgb: '1F1F1F' } }),
+    });
+    expect(cellStyle(ficha, 'B15')?.fill).toBeUndefined();
+    expect(cellStyle(dashboard, 'B5')).toMatchObject({
+      font: expect.objectContaining({ color: { rgb: '1F1F1F' } }),
+    });
+    expect(cellStyle(dashboard, 'B5')?.fill).toBeUndefined();
 
     const dashboardRows = XLSX.utils.sheet_to_json<Array<string | number>>(dashboard, { header: 1, defval: '' });
     const completionRow = dashboardRows.findIndex((row) => row[0] === 'Completitud (%)');

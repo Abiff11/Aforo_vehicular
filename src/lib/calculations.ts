@@ -59,27 +59,63 @@ function combineNotes(rows: CaptureRow[]): string {
   return Array.from(new Set(rows.map((row) => row.notes.trim()).filter(Boolean))).join(' | ');
 }
 
-function durationMinutes(start: string, end: string): number {
-  const startMinute = minutesFromClock(start);
-  const endMinute = minutesFromClock(end);
+function timeValidationError(value: string): string | null {
+  try {
+    minutesFromClock(value);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : 'La hora del programa es inválida.';
+  }
+}
+
+function programTimeIssue(program: SignalProgram): SignalValidationIssue | null {
+  const startError = timeValidationError(program.startTime);
+  const endError = timeValidationError(program.endTime);
+  const error = startError ?? endError;
+  return error
+    ? {
+        code: 'invalid-program-time',
+        programId: program.id,
+        message: `El programa ${program.name} tiene horario inválido: ${error}`,
+      }
+    : null;
+}
+
+function durationMinutes(start: string, end: string): number | null {
+  const startMinute = safeMinutesFromClock(start);
+  const endMinute = safeMinutesFromClock(end);
+  if (startMinute === null || endMinute === null) return null;
   const duration = (endMinute - startMinute + MINUTES_PER_DAY) % MINUTES_PER_DAY;
   return duration === 0 ? MINUTES_PER_DAY : duration;
 }
 
-function clockOffset(referenceStart: string, value: string): number {
-  return (minutesFromClock(value) - minutesFromClock(referenceStart) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+function safeMinutesFromClock(value: string): number | null {
+  try {
+    return minutesFromClock(value);
+  } catch {
+    return null;
+  }
+}
+
+function clockOffset(referenceStart: string, value: string): number | null {
+  const valueMinute = safeMinutesFromClock(value);
+  const referenceMinute = safeMinutesFromClock(referenceStart);
+  if (valueMinute === null || referenceMinute === null) return null;
+  return (valueMinute - referenceMinute + MINUTES_PER_DAY) % MINUTES_PER_DAY;
 }
 
 function programContainsInterval(program: SignalProgram, start: string, end: string): boolean {
   const programDuration = durationMinutes(program.startTime, program.endTime);
   const intervalDuration = durationMinutes(start, end);
   const intervalOffset = clockOffset(program.startTime, start);
+  if (programDuration === null || intervalDuration === null || intervalOffset === null) return false;
   return intervalOffset < programDuration && intervalOffset + intervalDuration <= programDuration;
 }
 
 function programActiveAtMinute(program: SignalProgram, minute: number): boolean {
-  const start = minutesFromClock(program.startTime);
+  const start = safeMinutesFromClock(program.startTime);
   const duration = durationMinutes(program.startTime, program.endTime);
+  if (start === null || duration === null) return false;
   const offset = (minute - start + MINUTES_PER_DAY) % MINUTES_PER_DAY;
   return offset < duration;
 }
@@ -96,8 +132,9 @@ export function resolveProgramForInterval(
   const contained = programs.find((program) => programContainsInterval(program, intervalStart, intervalEnd));
   if (contained) return { program: contained, crossesProgramChange: false };
 
-  const startMinute = minutesFromClock(intervalStart);
+  const startMinute = safeMinutesFromClock(intervalStart);
   const intervalDuration = durationMinutes(intervalStart, intervalEnd);
+  if (startMinute === null || intervalDuration === null) return { program: null, crossesProgramChange: false };
   const lastMinute = (startMinute + Math.max(0, intervalDuration - 1)) % MINUTES_PER_DAY;
   const startProgram = programAtMinute(programs, startMinute);
   const endProgram = programAtMinute(programs, lastMinute);
@@ -112,9 +149,15 @@ export function validateSignalConfiguration(
   assignments: SignalMovementAssignment[],
 ): SignalValidationIssue[] {
   const validationIssues: SignalValidationIssue[] = [];
+  const invalidProgramTimeIds = new Set<string>();
 
   for (let leftIndex = 0; leftIndex < programs.length; leftIndex += 1) {
     const left = programs[leftIndex];
+    const leftTimeIssue = programTimeIssue(left);
+    if (leftTimeIssue) {
+      validationIssues.push(leftTimeIssue);
+      invalidProgramTimeIds.add(left.id);
+    }
     if (left.cycleSeconds !== null && (!Number.isFinite(left.cycleSeconds) || left.cycleSeconds <= 0)) {
       validationIssues.push({
         code: 'invalid-program-cycle',
@@ -125,6 +168,12 @@ export function validateSignalConfiguration(
 
     for (let rightIndex = leftIndex + 1; rightIndex < programs.length; rightIndex += 1) {
       const right = programs[rightIndex];
+      const rightTimeIssue = programTimeIssue(right);
+      if (rightTimeIssue && !invalidProgramTimeIds.has(right.id)) {
+        validationIssues.push(rightTimeIssue);
+        invalidProgramTimeIds.add(right.id);
+      }
+      if (invalidProgramTimeIds.has(left.id) || invalidProgramTimeIds.has(right.id)) continue;
       const overlaps = Array.from({ length: MINUTES_PER_DAY }, (_, minute) => minute).some(
         (minute) => programActiveAtMinute(left, minute) && programActiveAtMinute(right, minute),
       );

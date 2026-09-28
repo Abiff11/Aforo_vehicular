@@ -5,6 +5,7 @@ export type StudyStatus = 'draft' | 'incomplete' | 'validated' | 'exported';
 export type SaturationSource = 'measured' | 'estimated' | 'unknown';
 export type SignalValidationCode =
   | 'program-overlap'
+  | 'invalid-program-time'
   | 'invalid-program-cycle'
   | 'invalid-program-phase'
   | 'invalid-assignment-program'
