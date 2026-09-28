@@ -70,7 +70,6 @@ export function createDefaultStudyMetadata(now = new Date().toISOString()): Stud
     intervalMinutes: 15,
     surveyor: '',
     weather: '',
-    observedSaturationFlowPerLane: null,
     notes: '',
   };
 }
@@ -271,8 +270,7 @@ export function addSignalMovementAssignment(study: Study): Study {
   const existing = study.configurationSnapshot.signalMovementAssignments ?? [];
   const access = study.configurationSnapshot.accesses[0];
   const program = study.configurationSnapshot.programs[0];
-  const phase = program?.phaseTimings[0];
-  if (!access || !program || !phase) return study;
+  if (!access || !program) return study;
 
   const nextNumber = existing.reduce((maximum, assignment) => {
     const match = assignment.id.match(/signal-group-(\d+)$/);
@@ -286,9 +284,10 @@ export function addSignalMovementAssignment(study: Study): Study {
     accessId: access.id,
     movement: preferredMovement,
     programId: program.id,
-    phaseId: phase.id,
+    phaseId: program.phaseTimings[0]?.id ?? '',
     lanes: null,
     saturationFlowPerLane: null,
+    saturationSource: 'unknown',
     effectiveGreenSeconds: null,
   };
 
