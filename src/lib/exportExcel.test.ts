@@ -1,73 +1,80 @@
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
+import { calculateStudySummary } from './calculations';
 import { exportStudyWorkbook } from './exportExcel';
-import { createDefaultStudy } from './study';
+import {
+  addSignalMovementAssignment,
+  createDefaultStudy,
+  updateProgram,
+  updateProgramPhase,
+  updateProgramPhaseCount,
+  updateSignalMovementAssignment,
+  validateStudy,
+} from './study';
 import { intersections } from '../data/intersections';
+import { createTrafficStudyForIntersection, parseRoadTrafficCsv } from './roadTrafficImport';
 import type { Study } from './types';
 
-function createFichaStudy(): Study {
-  const study = createDefaultStudy('INT-001');
-  const firstInterval = study.intervals[0].id;
-  const secondInterval = study.intervals[1].id;
+const roadTrafficCsv = `CARRETERA,"CLAVE CARRETERA",RUTA,"PUNTO GENERADOR",KM,TIPO,SC,TDPA2024,M,A,B,C2,C3,T3S2,T3S3,T3S2R4,OTROS,AUTOS,AUTOBUSES,CAMIONES,D,K',LAT,LONG
+"Huajuapan de León - Oaxaca",20056,MEX-190,"T. Aut. Cuacnopalan - Oaxaca",181.8,3,1,24977,10.6,80.5,2,3.1,1.2,0.9,0.5,0.8,0.4,91.1,2,6.9,0.511,0.076,17.139925,-96.776604
+`;
 
+function fillCompleteRows(study: Study): Study {
+  const peakThrough = new Map(study.intervals.slice(0, 4).map((item, index) => [item.id, [100, 120, 140, 160][index]]));
   return {
     ...study,
-    metadata: {
-      ...study.metadata,
-      date: '2026-09-28',
-      surveyor: 'Aforador prueba',
-      weather: 'Despejado',
-      observedSaturationFlowPerLane: 1800,
-      notes: 'Estudio de validación',
-    },
-    rows: study.rows.map((row) => {
-      if (row.accessId === 'north' && row.intervalId === firstInterval) {
-        return {
-          ...row,
-          left: 10,
-          through: 80,
-          right: 10,
-          heavy: 12,
-          motorcycles: 8,
-          bicycles: 3,
-          pedestrians: 5,
-          maxQueue: 14,
-          averageQueue: 8,
-          queueLength: 56,
-          stoppedVehiclesPerCycle: 7,
-          observedCycle: 90,
-          observedProgram: 'P1',
-          notes: 'Demanda alta',
-        };
-      }
-
-      if (row.accessId === 'north' && row.intervalId === secondInterval) {
-        return {
-          ...row,
-          left: 5,
-          through: 40,
-          right: 5,
-          heavy: 6,
-          motorcycles: 4,
-          maxQueue: 18,
-          averageQueue: 10,
-          queueLength: 72,
-          stoppedVehiclesPerCycle: 9,
-        };
-      }
-
-      return row;
-    }),
+    rows: study.rows.map((row) => ({
+      ...row,
+      left: row.left === null && !study.configurationSnapshot.accesses.find((access) => access.id === row.accessId)?.movements.left ? null : 0,
+      through: row.through === null && !study.configurationSnapshot.accesses.find((access) => access.id === row.accessId)?.movements.through
+        ? null
+        : row.accessId === 'north'
+          ? (peakThrough.get(row.intervalId) ?? 10)
+          : 0,
+      right: row.right === null && !study.configurationSnapshot.accesses.find((access) => access.id === row.accessId)?.movements.right ? null : 0,
+      uTurn: null,
+      heavy: 0,
+      motorcycles: 0,
+      bicycles: 0,
+      pedestrians: 0,
+      observedCycle: row.accessId === 'north' && peakThrough.has(row.intervalId)
+        ? [92, 88, 90, 90][study.intervals.findIndex((interval) => interval.id === row.intervalId)]
+        : null,
+    })),
   };
 }
 
-describe('exportStudyWorkbook', () => {
-  it('creates the seven required sheets without invalid numeric values', () => {
-    const study = createDefaultStudy('INT-001');
-    const workbook = exportStudyWorkbook(study, intersections[0]);
-    const names = workbook.SheetNames;
+function createFormalStudy(): Study {
+  let study = createDefaultStudy('INT-001');
+  study = updateProgram(study, 'p1', {
+    startTime: '07:00',
+    endTime: '09:00',
+    cycleSeconds: 90,
+    greenSeconds: 40,
+    amberSeconds: 3,
+    redSeconds: 47,
+  });
+  study = updateProgramPhaseCount(study, 'p1', 1);
+  study = updateProgramPhase(study, 'p1', 'phase-1', { cycleSeconds: 90, greenSeconds: 40, amberSeconds: 3, redSeconds: 47 });
+  study = addSignalMovementAssignment(study);
+  const assignment = study.configurationSnapshot.signalMovementAssignments![0];
+  study = updateSignalMovementAssignment(study, assignment.id, {
+    accessId: 'north',
+    movement: 'through',
+    programId: 'p1',
+    phaseId: 'phase-1',
+    lanes: 2,
+    saturationFlowPerLane: 1800,
+    effectiveGreenSeconds: 40,
+  });
+  study = fillCompleteRows(study);
+  return validateStudy(study, true);
+}
 
-    expect(names).toEqual([
+describe('exportStudyWorkbook calculation integrity', () => {
+  it('creates the seven required sheets without invalid numeric values', () => {
+    const workbook = exportStudyWorkbook(createDefaultStudy('INT-001'), intersections[0]);
+    expect(workbook.SheetNames).toEqual([
       '01_FICHA_TECNICA',
       '02_DASHBOARD',
       '03_AFORO_DETALLADO',
@@ -80,71 +87,87 @@ describe('exportStudyWorkbook', () => {
     const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
     const parsed = XLSX.read(buffer, { type: 'buffer' });
     const allCells = parsed.SheetNames.flatMap((name) => Object.values(parsed.Sheets[name]));
-
     expect(allCells.some((cell) => typeof cell === 'object' && String(cell.v).match(/NaN|Infinity|#DIV\/0!/))).toBe(false);
   });
 
-  it('builds a ficha tecnica with the reference sections and consolidated interval data', () => {
-    const study = createFichaStudy();
+  it('marks incomplete observed studies as partial and never invents unknown values', () => {
+    const study = createDefaultStudy('INT-001');
     const workbook = exportStudyWorkbook(study, intersections[0]);
-    const ficha = XLSX.utils.sheet_to_json<Array<string | number>>(workbook.Sheets['01_FICHA_TECNICA'], {
-      header: 1,
-      defval: '',
-    });
-
-    expect(ficha.some((row) => row.includes('1. DATOS GENERALES'))).toBe(true);
-    expect(ficha.some((row) => row.includes('2. DATOS DEL SEMÁFORO'))).toBe(true);
-    expect(ficha.some((row) => row.includes('3. AFORO VEHICULAR – INTERVALOS DE 15 MINUTOS'))).toBe(true);
-    expect(ficha.some((row) => row.includes('4. RESUMEN Y HORA DE MÁXIMA DEMANDA'))).toBe(true);
-    expect(ficha.some((row) => row.includes('5. CONTROL DE COLAS Y OPERACIÓN'))).toBe(true);
-    expect(ficha.some((row) => row.includes('6. INDICADORES SEMAFÓRICOS'))).toBe(true);
-    expect(ficha.some((row) => row.includes('lunes'))).toBe(true);
-
-    const intervalRow = ficha.find((row) => row[0] === study.intervals[0].label);
-    expect(intervalRow).toEqual([
-      study.intervals[0].label,
-      10,
-      80,
-      10,
-      0,
-      100,
-      12,
-      8,
-      3,
-      5,
-      'Demanda alta',
-    ]);
-  });
-
-  it('exports each detailed row total instead of repeating the full access total', () => {
-    const study = createFichaStudy();
-    const workbook = exportStudyWorkbook(study, intersections[0]);
+    const ficha = XLSX.utils.sheet_to_json<Array<string | number>>(workbook.Sheets['01_FICHA_TECNICA'], { header: 1, defval: '' });
     const detailed = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets['03_AFORO_DETALLADO']);
-    const firstNorth = detailed.find(
-      (row) => row.Intervalo === study.intervals[0].label && row.Acceso === 'Norte',
-    );
 
-    expect(firstNorth?.Total).toBe(100);
+    expect(ficha.some((row) => row.includes('ESTUDIO INCOMPLETO — RESULTADOS PARCIALES — NO UTILIZAR COMO RESULTADO DEFINITIVO'))).toBe(true);
+    expect(ficha.some((row) => row.includes('Fuente:') && row.includes('Aforo observado'))).toBe(true);
+    expect(detailed[0]).toMatchObject({ Izquierda: 'N/D', Frente: 'N/D', Derecha: 'N/D', Pesados: 'N/D' });
   });
 
-  it('exports queue operation and semaphoric indicators from the calculated source of truth', () => {
-    const study = createFichaStudy();
+  it('exports formal lane-group capacity and observed cycle statistics directly from the shared calculation engine', () => {
+    const study = createFormalStudy();
+    const summary = calculateStudySummary(
+      study.rows,
+      study.configurationSnapshot.accesses,
+      study.metadata.intervalMinutes,
+      {
+        programs: study.configurationSnapshot.programs,
+        assignments: study.configurationSnapshot.signalMovementAssignments ?? [],
+      },
+    );
+    const expectedGroup = summary.signalGroupIndicators?.[0];
+    const expectedCycle = summary.cycleSummaries?.find((item) => item.accessId === 'north');
     const workbook = exportStudyWorkbook(study, intersections[0]);
-    const queues = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets['05_COLAS_OPERACION']);
     const indicators = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets['06_INDICADORES']);
-    const north = queues.find((row) => row.Acceso === 'Norte');
-    const indicatorMap = new Map(indicators.map((row) => [row.Indicador, row.Valor]));
+    const group = indicators.find((row) => row.Tipo === 'Grupo semafórico');
+    const cycle = indicators.find((row) => row.Tipo === 'Ciclo observado' && row.Acceso === 'Norte');
 
-    expect(north).toMatchObject({
-      ColaMaxima: 18,
-      ColaPromedio: 9,
-      LongitudMaxima: 72,
-      DetenidosPorCiclo: 8,
+    expect(expectedGroup).toBeDefined();
+    expect(group).toMatchObject({
+      Acceso: 'Norte',
+      Movimiento: 'Frente',
+      Programa: 'p1',
+      Fase: 'phase-1',
+      VolumenHoraPico: expectedGroup?.peakHourVolume ?? 'N/D',
+      Saturacion: expectedGroup?.saturationFlowPerLane ?? 'N/D',
+      Carriles: expectedGroup?.lanes ?? 'N/D',
+      VerdeEfectivo: expectedGroup?.effectiveGreenSeconds ?? 'N/D',
+      Ciclo: expectedGroup?.cycleSeconds ?? 'N/D',
+      Capacidad: expectedGroup?.capacity ?? 'N/D',
     });
-    expect(indicatorMap.get('Flujo hora pico (veh/h)')).toBe(150);
-    expect(indicatorMap.get('Verde efectivo (s)')).toBe(40);
-    expect(Number(indicatorMap.get('Proporción de verde g/C'))).toBeCloseTo(40 / 90);
-    expect(indicatorMap.get('Flujo de saturación observado (veh/h/carril)')).toBe(1800);
-    expect(Number(indicatorMap.get('Relación demanda/capacidad (v/c)'))).toBeCloseTo(150 / 6400);
+    expect(Number(group?.['g/C'])).toBeCloseTo(expectedGroup?.greenRatio ?? 0);
+    expect(Number(group?.['v/c'])).toBeCloseTo(expectedGroup?.volumeCapacityRatio ?? 0);
+    expect(cycle).toMatchObject({
+      CicloPromedio: expectedCycle?.averageObservedCycle ?? 'N/D',
+      CicloMinimo: expectedCycle?.minObservedCycle ?? 'N/D',
+      CicloMaximo: expectedCycle?.maxObservedCycle ?? 'N/D',
+      CicloProgramado: expectedCycle?.programmedCycleSeconds ?? 'N/D',
+      DiferenciaPromedio: expectedCycle?.averageDifferenceSeconds ?? 'N/D',
+    });
+
+    const aggregate = indicators.find((row) => row.Tipo === 'Capacidad agregada');
+    expect(aggregate).toBeUndefined();
+  });
+
+  it('exports TDPA as a separate estimate without fabricating observed aforo results', () => {
+    const [record] = parseRoadTrafficCsv(roadTrafficCsv);
+    const { study } = createTrafficStudyForIntersection(record, intersections[0]);
+    const workbook = exportStudyWorkbook(study, intersections[0]);
+    const dashboard = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets['02_DASHBOARD']);
+    const ficha = XLSX.utils.sheet_to_json<Array<string | number>>(workbook.Sheets['01_FICHA_TECNICA'], { header: 1, defval: '' });
+    const indicatorMap = new Map(dashboard.map((row) => [row.Indicador, row.Valor]));
+    const observedSummary = ficha.find((row) =>
+      row[0] === 'Volumen registrado parcial:' || row[0] === 'Volumen total observado:' || row[0] === 'Volumen observado:',
+    );
+    const leftMovementSummary = ficha.find((row) => row[3] === 'Izquierda');
+
+    expect(ficha.some((row) => row.includes('ESTIMACIÓN TDPA — NO SUSTITUYE UN AFORO DE INTERSECCIÓN EN CAMPO.'))).toBe(true);
+    expect(observedSummary?.[1]).toBe('N/D');
+    expect(leftMovementSummary?.[4]).toBe('N/D');
+    expect(leftMovementSummary?.[5]).toBe('N/D');
+    expect(indicatorMap.get('Fuente')).toBe('Estimación TDPA');
+    expect(indicatorMap.get('TDPA')).toBe(24977);
+    expect(indicatorMap.get("K'")).toBe(0.076);
+    expect(indicatorMap.get('D')).toBe(0.511);
+    expect(indicatorMap.get('Volumen hora de diseño estimado')).toBe(1898);
+    expect(indicatorMap.get('Volumen total observado')).toBe('N/D');
+    expect(indicatorMap.get('FHP observado')).toBe('N/D');
   });
 });

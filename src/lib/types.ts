@@ -1,4 +1,8 @@
 export type MovementKey = 'left' | 'through' | 'right' | 'uTurn';
+export type StudySource = 'observed' | 'estimated_tdpa';
+export type RowState = 'complete' | 'incomplete' | 'error';
+export type StudyStatus = 'draft' | 'incomplete' | 'validated' | 'exported';
+export type SaturationSource = 'measured' | 'estimated' | 'unknown';
 
 export type VerificationStatus = 'verified' | 'pending';
 
@@ -47,11 +51,24 @@ export interface SignalPhaseTiming {
   redSeconds: number | null;
 }
 
+export interface SignalMovementAssignment {
+  id: string;
+  accessId: string;
+  movement: MovementKey;
+  programId: string;
+  phaseId: string;
+  lanes: number | null;
+  saturationFlowPerLane: number | null;
+  saturationSource: SaturationSource;
+  effectiveGreenSeconds: number | null;
+}
+
 export interface IntersectionConfig {
   intersectionId: string;
   inherited: boolean;
   accesses: AccessConfig[];
   programs: SignalProgram[];
+  signalMovementAssignments?: SignalMovementAssignment[];
   updatedAt: string;
 }
 
@@ -96,8 +113,24 @@ export interface StudyMetadata {
   intervalMinutes: number;
   surveyor: string;
   weather: string;
-  observedSaturationFlowPerLane: NumericCaptureValue;
   notes: string;
+}
+
+export interface TdpaEstimate {
+  road: string;
+  route: string;
+  point: string;
+  kilometer: number;
+  dailyTraffic: number;
+  designHourFactor: number;
+  directionalDistribution: number;
+  designHourTotal: number;
+  mainDirectionHour: number;
+  oppositeDirectionHour: number;
+  hourlyMotorcycles: number;
+  hourlyHeavyVehicles: number;
+  motorcycleShare: number;
+  heavyVehicleShare: number;
 }
 
 export interface Study {
@@ -109,9 +142,18 @@ export interface Study {
   configurationSnapshot: IntersectionConfig;
   intervals: IntervalBlock[];
   rows: CaptureRow[];
-  status: 'draft' | 'validated' | 'exported';
+  status: StudyStatus;
+  source?: StudySource;
+  tdpaEstimate?: TdpaEstimate | null;
+  legacyUnverified?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RowValidationResult {
+  rowId: string;
+  state: RowState;
+  issues: string[];
 }
 
 export interface PeakHourSummary {
@@ -120,6 +162,8 @@ export interface PeakHourSummary {
   maxIntervalVolume: number;
   factor: number | null;
   factorLabel: 'FHP' | 'Factor de uniformidad de hora pico';
+  intervalIds?: string[];
+  tie?: boolean;
 }
 
 export interface IntervalSummary {
@@ -137,6 +181,7 @@ export interface IntervalSummary {
   bicycles: number;
   pedestrians: number;
   notes: string;
+  complete?: boolean;
 }
 
 export interface QueueAccessSummary {
@@ -147,6 +192,34 @@ export interface QueueAccessSummary {
   maxQueueLength: number | null;
   stoppedVehiclesPerCycle: number | null;
   notes: string;
+}
+
+export interface CycleObservationSummary {
+  accessId: string;
+  accessName: string;
+  averageObservedCycle: number | null;
+  minObservedCycle: number | null;
+  maxObservedCycle: number | null;
+  programmedCycleSeconds: number | null;
+  averageDifferenceSeconds: number | null;
+}
+
+export interface SignalGroupIndicator {
+  assignmentId: string;
+  accessId: string;
+  accessName: string;
+  movement: MovementKey;
+  movementLabel: string;
+  programId: string;
+  phaseId: string;
+  peakHourVolume: number | null;
+  saturationFlowPerLane: number | null;
+  lanes: number | null;
+  cycleSeconds: number | null;
+  effectiveGreenSeconds: number | null;
+  greenRatio: number | null;
+  capacity: number | null;
+  volumeCapacityRatio: number | null;
 }
 
 export interface SignalIndicators {
@@ -172,9 +245,19 @@ export interface StudySummary {
   byAccess: Array<{ accessId: string; accessName: string; volume: number }>;
   byMovement: Array<{ movement: string; volume: number; percent: number }>;
   queueByAccess: QueueAccessSummary[];
+  cycleSummaries?: CycleObservationSummary[];
+  signalGroupIndicators?: SignalGroupIndicator[];
   signalIndicators: SignalIndicators;
+  completeRows: number;
+  incompleteRows: number;
+  errorRows: number;
+  completionPercent: number;
+  isComplete: boolean;
+  isPartial: boolean;
+  rowValidation?: RowValidationResult[];
   dataQuality: string[];
   issues: string[];
+  warnings?: string[];
 }
 
 export interface StoredState {
@@ -191,5 +274,5 @@ export interface StoredState {
 }
 
 export interface VersionedStoredState extends StoredState {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2 | 3;
 }

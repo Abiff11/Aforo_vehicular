@@ -3,9 +3,12 @@ import { intersections } from '../data/intersections';
 import {
   calculateRoadTrafficProfile,
   createCorridorTrafficStudies,
+  createTrafficStudyForIntersection,
   findCorridorIntersections,
   parseRoadTrafficCsv,
 } from './roadTrafficImport';
+import { calculateStudySummary } from './calculations';
+import { createDefaultStudy } from './study';
 
 const sourceCsv = `CARRETERA,"CLAVE CARRETERA",RUTA,"PUNTO GENERADOR",KM,TIPO,SC,TDPA2024,M,A,B,C2,C3,T3S2,T3S3,T3S2R4,OTROS,AUTOS,AUTOBUSES,CAMIONES,D,K',LAT,LONG
 "Huajuapan de León - Oaxaca",20056,MEX-190,"T. Aut. Cuacnopalan - Oaxaca",181.8,3,1,24977,10.6,80.5,2,3.1,1.2,0.9,0.5,0.8,0.4,91.1,2,6.9,0.511,0.076,17.139925,-96.776604
@@ -38,22 +41,62 @@ describe('road traffic import', () => {
     ]);
   });
 
-  it('creates complete one-hour studies for every corridor intersection without inventing turning movements', () => {
+  it('creates a TDPA estimate without fabricating an observed intersection count', () => {
+    const [record] = parseRoadTrafficCsv(sourceCsv);
+    const imported = createTrafficStudyForIntersection(record, intersections[8]);
+    const summary = calculateStudySummary(
+      imported.study.rows,
+      imported.study.configurationSnapshot.accesses,
+      imported.study.metadata.intervalMinutes,
+    );
+
+    expect(imported.study.source).toBe('estimated_tdpa');
+    expect(imported.study.currentStep).toBe(6);
+    expect(imported.study.tdpaEstimate).toMatchObject({
+      dailyTraffic: 24977,
+      designHourFactor: 0.076,
+      directionalDistribution: 0.511,
+      designHourTotal: 1898,
+      mainDirectionHour: 970,
+      oppositeDirectionHour: 928,
+      hourlyMotorcycles: 201,
+      hourlyHeavyVehicles: 169,
+    });
+    expect(imported.study.rows.every((row) =>
+      row.left === null &&
+      row.through === null &&
+      row.right === null &&
+      row.uTurn === null &&
+      row.heavy === null &&
+      row.motorcycles === null &&
+      row.bicycles === null &&
+      row.pedestrians === null
+    )).toBe(true);
+    expect(summary.totalMotorized).toBe(0);
+    expect(summary.peakHour).toBeNull();
+  });
+
+  it('attaches TDPA to an existing observed capture without reclassifying or overwriting it', () => {
+    const [record] = parseRoadTrafficCsv(sourceCsv);
+    const base = createDefaultStudy(intersections[0].id);
+    const observed = {
+      ...base,
+      rows: base.rows.map((item, index) => index === 0 ? { ...item, through: 25 } : item),
+    };
+    const imported = createTrafficStudyForIntersection(record, intersections[0], observed);
+
+    expect(imported.study.source).toBe('observed');
+    expect(imported.study.rows[0].through).toBe(25);
+    expect(imported.study.tdpaEstimate).toMatchObject({ designHourTotal: 1898 });
+  });
+
+  it('keeps corridor estimates separate instead of distributing TDPA into 15-minute rows', () => {
     const [record] = parseRoadTrafficCsv(sourceCsv);
     const studies = createCorridorTrafficStudies(record, intersections, 'INT-009');
-    const first = studies[0];
 
     expect(studies).toHaveLength(6);
-    expect(first.intersection.id).toBe('INT-009');
-    expect(first.study.currentStep).toBe(6);
-    expect(first.study.metadata).toMatchObject({
-      startTime: '07:00',
-      endTime: '08:00',
-      intervalMinutes: 15,
-    });
-    expect(first.study.rows.filter((row) => row.accessId === 'north').map((row) => row.through)).toEqual([243, 243, 242, 242]);
-    expect(first.study.rows.filter((row) => row.accessId === 'south').map((row) => row.through)).toEqual([232, 232, 232, 232]);
-    expect(first.study.rows.every((row) => row.left === 0 && row.right === 0 && row.uTurn === null)).toBe(true);
-    expect(first.study.rows.some((row) => row.notes.includes('Giros no disponibles'))).toBe(true);
+    expect(studies.every(({ study }) => study.source === 'estimated_tdpa')).toBe(true);
+    expect(studies.every(({ study }) => study.rows.every((row) => row.through === null))).toBe(true);
+    expect(studies.every(({ study }) => study.tdpaEstimate?.designHourTotal === 1898)).toBe(true);
   });
 });

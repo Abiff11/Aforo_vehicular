@@ -1,9 +1,6 @@
-import type { Intersection, Study } from './types';
-import { createDefaultStudy, rebuildStudyRows } from './study';
+import type { Intersection, Study, TdpaEstimate } from './types';
+import { createDefaultStudy, hasCapturedData } from './study';
 
-const DEFAULT_START_TIME = '07:00';
-const DEFAULT_END_TIME = '08:00';
-const DEFAULT_INTERVAL_MINUTES = 15;
 const EARTH_RADIUS_METERS = 6_371_000;
 
 export interface RoadTrafficRecord {
@@ -48,7 +45,6 @@ function parseNumber(value: string | undefined, field: string): number {
   if (!Number.isFinite(normalized)) {
     throw new Error(`Campo numerico invalido: ${field}`);
   }
-
   return normalized;
 }
 
@@ -66,29 +62,20 @@ function splitCsvLine(line: string): string[] {
       index += 1;
       continue;
     }
-
     if (char === '"') {
       quoted = !quoted;
       continue;
     }
-
     if (char === ',' && !quoted) {
       cells.push(current);
       current = '';
       continue;
     }
-
     current += char;
   }
 
   cells.push(current);
   return cells;
-}
-
-function splitIntegerTotal(total: number, parts: number): number[] {
-  const base = Math.floor(total / parts);
-  const remainder = total - base * parts;
-  return Array.from({ length: parts }, (_, index) => base + (index < remainder ? 1 : 0));
 }
 
 function normalizeText(value: string): string {
@@ -124,17 +111,11 @@ function calculateDistanceMeters(
 function findNearestIntersection(intersections: Intersection[], record: RoadTrafficRecord): Intersection {
   const nearest = intersections.reduce<{ intersection: Intersection; distance: number } | null>((best, intersection) => {
     const distance = calculateDistanceMeters(intersection, { latitude: record.latitude, longitude: record.longitude });
-    if (!best || distance < best.distance) {
-      return { intersection, distance };
-    }
-
+    if (!best || distance < best.distance) return { intersection, distance };
     return best;
   }, null);
 
-  if (!nearest) {
-    throw new Error('No hay intersecciones configuradas para asociar el CSV.');
-  }
-
+  if (!nearest) throw new Error('No hay intersecciones configuradas para asociar el CSV.');
   return nearest.intersection;
 }
 
@@ -145,7 +126,6 @@ function getCorridorSegment(intersections: Intersection[], source: Intersection)
     const count = intersections.filter((intersection) =>
       getNameSegments(intersection).some((item) => normalizeText(item) === normalized),
     ).length;
-
     return { segment, count };
   });
 
@@ -157,12 +137,9 @@ export function parseRoadTrafficCsv(csv: string): RoadTrafficRecord[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  if (lines.length < 2) {
-    throw new Error('El CSV no contiene filas de datos.');
-  }
+  if (lines.length < 2) throw new Error('El CSV no contiene filas de datos.');
 
   const headers = splitCsvLine(lines[0]);
-
   return lines.slice(1).map((line) => {
     const cells = splitCsvLine(line);
     const row = new Map(headers.map((header, index) => [header, cells[index] ?? '']));
@@ -208,11 +185,29 @@ export function calculateRoadTrafficProfile(record: RoadTrafficRecord): RoadTraf
   };
 }
 
+export function createTdpaEstimate(record: RoadTrafficRecord): TdpaEstimate {
+  const profile = calculateRoadTrafficProfile(record);
+  return {
+    road: record.road,
+    route: record.route,
+    point: record.point,
+    kilometer: record.kilometer,
+    dailyTraffic: profile.dailyTraffic,
+    designHourFactor: normalizeFraction(record.designHourFactor),
+    directionalDistribution: normalizeFraction(record.directionalDistribution),
+    designHourTotal: profile.designHourTotal,
+    mainDirectionHour: profile.mainDirectionHour,
+    oppositeDirectionHour: profile.oppositeDirectionHour,
+    hourlyMotorcycles: profile.hourlyMotorcycles,
+    hourlyHeavyVehicles: profile.hourlyHeavyVehicles,
+    motorcycleShare: profile.motorcycleShare,
+    heavyVehicleShare: profile.heavyVehicleShare,
+  };
+}
+
 export function findCorridorIntersections(intersections: Intersection[], sourceIntersectionId: string): Intersection[] {
   const source = intersections.find((intersection) => intersection.id === sourceIntersectionId);
-  if (!source) {
-    throw new Error(`Interseccion origen no encontrada: ${sourceIntersectionId}`);
-  }
+  if (!source) throw new Error(`Interseccion origen no encontrada: ${sourceIntersectionId}`);
 
   const corridorSegment = normalizeText(getCorridorSegment(intersections, source));
   return intersections
@@ -222,65 +217,29 @@ export function findCorridorIntersections(intersections: Intersection[], sourceI
 
 export function getCorridorName(intersections: Intersection[], sourceIntersectionId: string): string {
   const source = intersections.find((intersection) => intersection.id === sourceIntersectionId);
-  if (!source) {
-    throw new Error(`Interseccion origen no encontrada: ${sourceIntersectionId}`);
-  }
-
+  if (!source) throw new Error(`Interseccion origen no encontrada: ${sourceIntersectionId}`);
   return getCorridorSegment(intersections, source);
 }
 
-function applyRoadTrafficToStudy(study: Study, record: RoadTrafficRecord): Study {
-  const profile = calculateRoadTrafficProfile(record);
-  const intervalCount = Math.max(1, study.intervals.length);
-  const mainDirectionIntervals = splitIntegerTotal(profile.mainDirectionHour, intervalCount);
-  const oppositeDirectionIntervals = splitIntegerTotal(profile.oppositeDirectionHour, intervalCount);
-  const sourceNote = `Estimacion TDPA ${record.route} km ${record.kilometer}; Giros no disponibles en CSV.`;
+function applyRoadTrafficEstimate(study: Study, record: RoadTrafficRecord): Study {
+  const sourceNote = `Estimación TDPA ${record.route} km ${record.kilometer}. Punto generador: ${record.point}. No sustituye un aforo de intersección en campo.`;
+  const preserveObservedSource = (study.source ?? 'observed') === 'observed' && hasCapturedData(study);
+  const status = preserveObservedSource
+    ? study.status === 'exported' ? 'validated' : study.status
+    : 'draft';
 
   return {
     ...study,
     currentStep: 6,
+    source: preserveObservedSource ? 'observed' : 'estimated_tdpa',
+    tdpaEstimate: createTdpaEstimate(record),
+    status,
     metadata: {
       ...study.metadata,
-      notes: `${sourceNote} Punto generador: ${record.point}.`,
+      notes: study.metadata.notes ? `${study.metadata.notes} | ${sourceNote}` : sourceNote,
     },
-    rows: study.rows.map((row) => {
-      const intervalIndex = study.intervals.findIndex((interval) => interval.id === row.intervalId);
-      const through =
-        row.accessId === 'north'
-          ? mainDirectionIntervals[intervalIndex] ?? 0
-          : row.accessId === 'south'
-            ? oppositeDirectionIntervals[intervalIndex] ?? 0
-            : 0;
-
-      return {
-        ...row,
-        left: row.left === null ? null : 0,
-        through: row.through === null ? null : through,
-        right: row.right === null ? null : 0,
-        uTurn: null,
-        heavy: Math.round(through * profile.heavyVehicleShare),
-        motorcycles: Math.round(through * profile.motorcycleShare),
-        bicycles: 0,
-        pedestrians: 0,
-        observedProgram: 'TDPA',
-        notes: through > 0 ? sourceNote : 'Acceso sin flujo estimado por el CSV de entrada.',
-      };
-    }),
+    updatedAt: new Date().toISOString(),
   };
-}
-
-function createOneHourStudy(intersectionId: string, baseStudy?: Study): Study {
-  const study = baseStudy ?? createDefaultStudy(intersectionId);
-  return rebuildStudyRows({
-    ...study,
-    intersectionId,
-    metadata: {
-      ...study.metadata,
-      startTime: DEFAULT_START_TIME,
-      endTime: DEFAULT_END_TIME,
-      intervalMinutes: DEFAULT_INTERVAL_MINUTES,
-    },
-  });
 }
 
 export function createTrafficStudyForIntersection(
@@ -288,10 +247,13 @@ export function createTrafficStudyForIntersection(
   intersection: Intersection,
   baseStudy?: Study,
 ): CorridorTrafficStudy {
-  return {
-    intersection,
-    study: applyRoadTrafficToStudy(createOneHourStudy(intersection.id, baseStudy), record),
+  const base = baseStudy ?? createDefaultStudy(intersection.id);
+  const aligned = {
+    ...base,
+    intersectionId: intersection.id,
+    configurationSnapshot: { ...base.configurationSnapshot, intersectionId: intersection.id },
   };
+  return { intersection, study: applyRoadTrafficEstimate(aligned, record) };
 }
 
 export function createCorridorTrafficStudies(
@@ -302,9 +264,7 @@ export function createCorridorTrafficStudies(
   const sourceIntersection = sourceIntersectionId
     ? intersections.find((intersection) => intersection.id === sourceIntersectionId)
     : findNearestIntersection(intersections, record);
-  if (!sourceIntersection) {
-    throw new Error(`Interseccion origen no encontrada: ${sourceIntersectionId}`);
-  }
+  if (!sourceIntersection) throw new Error(`Interseccion origen no encontrada: ${sourceIntersectionId}`);
 
   return findCorridorIntersections(intersections, sourceIntersection.id).map((intersection) =>
     createTrafficStudyForIntersection(record, intersection),
