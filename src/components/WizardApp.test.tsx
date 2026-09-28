@@ -158,6 +158,31 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(screen.queryByLabelText('Saturación grupo signal-group-1')).not.toBeInTheDocument();
   });
 
+  it('manages signal programs and exposes overlap validation in Semaforo', () => {
+    renderWithIntersection();
+    fireEvent.click(screen.getByRole('button', { name: /^4\s*Semaforo$/ }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Agregar programa' }));
+    expect(screen.getByLabelText('Nombre programa P2')).toHaveValue('P2');
+    expect(screen.getByLabelText('Hora inicio programa P2')).toHaveValue('09:00');
+    expect(screen.getByLabelText('Hora termino programa P2')).toHaveValue('10:00');
+
+    fireEvent.change(screen.getByLabelText('Hora inicio programa P2'), { target: { value: '08:30' } });
+    expect(screen.getByText('Los programas P1 y P2 se traslapan.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Eliminar programa P2' }));
+    expect(screen.queryByLabelText('Nombre programa P2')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Eliminar programa P1' })).not.toBeInTheDocument();
+  });
+
+  it('labels observed program as an optional operational note', () => {
+    renderWithIntersection();
+    fireEvent.click(screen.getByRole('button', { name: /^5\s*Aforo$/ }));
+
+    expect(screen.getByRole('columnheader', { name: 'Programa observado (opcional)' })).toBeInTheDocument();
+    expect(screen.getAllByLabelText(/Programa observado opcional ·/).length).toBeGreaterThan(0);
+  });
+
   it('shows incomplete validation state until observed capture is complete', () => {
     renderWithIntersection();
     fireEvent.click(screen.getByRole('button', { name: /^6\s*Validar$/ }));

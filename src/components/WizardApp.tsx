@@ -22,12 +22,14 @@ import {
 } from '../lib/roadTrafficImport';
 import {
   addSignalMovementAssignment,
+  addSignalProgram,
   createDefaultStudy,
   createDefaultStudyMetadata,
   hasCapturedData,
   markStudyExported,
   rebuildStudyRows,
   removeSignalMovementAssignment,
+  removeSignalProgram,
   updateAccessConfig,
   updateAccessMovement,
   updateProgram,
@@ -723,15 +725,43 @@ export function WizardApp() {
 
         {activeStudy.currentStep === 3 && (
           <section>
-            <h2>Programacion semaforica</h2>
-            <p className="section-description">El verde programado describe el controlador. Aquí se vinculan los grupos definidos en Configuración con programa, fase y verde efectivo.</p>
+            <div className="section-heading">
+              <div>
+                <h2>Programacion semaforica</h2>
+                <p className="section-description">El verde programado describe el controlador. Aquí se vinculan los grupos definidos en Configuración con programa, fase y verde efectivo.</p>
+              </div>
+              <button className="primary" onClick={() => setActiveStudy(addSignalProgram(activeStudy))} type="button">Agregar programa</button>
+            </div>
+            {(summary.signalValidationIssues?.length ?? 0) > 0 && (
+              <div className="panel" role="status">
+                <p className="warning"><AlertTriangle size={16} /> Revisar configuración semafórica.</p>
+                <ul>
+                  {summary.signalValidationIssues?.map((issue, index) => (
+                    <li key={`${issue.code}-${issue.programId ?? issue.assignmentId ?? 'general'}-${index}`}>{issue.message}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {activeStudy.configurationSnapshot.programs.map((program) => (
               <article className="panel" key={program.id}>
+                <div className="section-heading">
+                  <h3>{program.name || program.id}</h3>
+                  {activeStudy.configurationSnapshot.programs.length > 1 && (
+                    <button
+                      aria-label={`Eliminar programa ${program.name || program.id}`}
+                      className="danger-secondary"
+                      onClick={() => setActiveStudy(removeSignalProgram(activeStudy, program.id))}
+                      type="button"
+                    >
+                      Eliminar programa
+                    </button>
+                  )}
+                </div>
                 <div className="form-grid">
-                  <label>Programa<input value={program.name} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { name: event.target.value }))} /></label>
-                  <label>Hora inicio<input type="time" value={program.startTime} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { startTime: event.target.value }))} /></label>
-                  <label>Hora termino<input type="time" value={program.endTime} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { endTime: event.target.value }))} /></label>
-                  <label>Ciclo programado (s)<input type="number" value={program.cycleSeconds ?? ''} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { cycleSeconds: parseOptionalNumber(event.target.value) }))} /></label>
+                  <label>Programa<input aria-label={`Nombre programa ${program.name || program.id}`} value={program.name} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { name: event.target.value }))} /></label>
+                  <label>Hora inicio<input aria-label={`Hora inicio programa ${program.name || program.id}`} type="time" value={program.startTime} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { startTime: event.target.value }))} /></label>
+                  <label>Hora termino<input aria-label={`Hora termino programa ${program.name || program.id}`} type="time" value={program.endTime} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { endTime: event.target.value }))} /></label>
+                  <label>Ciclo programado (s)<input min={1} type="number" value={program.cycleSeconds ?? ''} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { cycleSeconds: parseOptionalNumber(event.target.value) }))} /></label>
                   <label>Verde programado (s)<input type="number" value={program.greenSeconds ?? ''} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { greenSeconds: parseOptionalNumber(event.target.value) }))} /></label>
                   <label>Ambar (s)<input type="number" value={program.amberSeconds ?? ''} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { amberSeconds: parseOptionalNumber(event.target.value) }))} /></label>
                   <label>Rojo (s)<input type="number" value={program.redSeconds ?? ''} onChange={(event) => setActiveStudy(updateProgram(activeStudy, program.id, { redSeconds: parseOptionalNumber(event.target.value) }))} /></label>
@@ -790,7 +820,7 @@ export function WizardApp() {
                           {(selectedProgram?.phaseTimings ?? []).map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
                         </select>
                       </label>
-                      <label>Verde efectivo (s)<input aria-label={`Verde efectivo grupo ${assignment.id}`} min={0} type="number" value={assignment.effectiveGreenSeconds ?? ''} onChange={(event) => updateSignalGroup(assignment, { effectiveGreenSeconds: parseOptionalNumber(event.target.value) })} /></label>
+                      <label>Verde efectivo (s)<input aria-label={`Verde efectivo grupo ${assignment.id}`} min={1} type="number" value={assignment.effectiveGreenSeconds ?? ''} onChange={(event) => updateSignalGroup(assignment, { effectiveGreenSeconds: parseOptionalNumber(event.target.value) })} /></label>
                     </article>
                   );
                 })}
@@ -802,12 +832,13 @@ export function WizardApp() {
         {activeStudy.currentStep === 4 && (
           <section>
             <h2>Tabla unica de aforo</h2>
+            <p className="section-description">El programa observado es una nota operacional opcional y no sustituye el programa semafórico configurado.</p>
             {(activeStudy.source ?? 'observed') === 'estimated_tdpa' && <p className="warning">Esta intersección tiene una estimación TDPA asociada. La tabla permanece vacía hasta que se realice captura de campo.</p>}
             <div className="table-wrap capture">
               <table>
                 <thead>
                   <tr>
-                    <th>Intervalo</th><th>Acceso</th><th>Izq</th><th>Frente</th><th>Der</th><th>Retorno</th><th>Total capturado</th><th>Pesados</th><th>Motos</th><th>Bicicletas</th><th>Peatones</th><th>Cola max</th><th>Cola prom</th><th>Longitud cola (m)</th><th>Det./ciclo</th><th>Ciclo obs.</th><th>Programa</th><th>Observaciones</th>
+                    <th>Intervalo</th><th>Acceso</th><th>Izq</th><th>Frente</th><th>Der</th><th>Retorno</th><th>Total capturado</th><th>Pesados</th><th>Motos</th><th>Bicicletas</th><th>Peatones</th><th>Cola max</th><th>Cola prom</th><th>Longitud cola (m)</th><th>Det./ciclo</th><th>Ciclo obs.</th><th>Programa observado (opcional)</th><th>Observaciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -833,7 +864,7 @@ export function WizardApp() {
                         {(['heavy', 'motorcycles', 'bicycles', 'pedestrians', 'maxQueue', 'averageQueue', 'queueLength', 'stoppedVehiclesPerCycle', 'observedCycle'] as Array<keyof CaptureRow>).map((field) => (
                           <td key={field}><input min={0} type="number" value={String(row[field] ?? '')} onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))} /></td>
                         ))}
-                        <td><input value={row.observedProgram} onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'observedProgram', event.target.value))} /></td>
+                        <td><input aria-label={`Programa observado opcional · ${row.intervalLabel} · ${row.accessName}`} value={row.observedProgram} onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'observedProgram', event.target.value))} /></td>
                         <td><input value={row.notes} onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'notes', event.target.value))} /></td>
                       </tr>
                     );
