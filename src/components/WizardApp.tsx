@@ -338,23 +338,11 @@ export function WizardApp() {
       };
     }
 
-    const existingConfig = state.intersectionConfigs[intersection.id];
-    const fallbackStudy = createDefaultStudy(intersection.id, studyTemplate);
-    const configuredStudy = existingConfig
-      ? { ...fallbackStudy, configurationSnapshot: existingConfig }
-      : state.lastConfiguration
-        ? {
-            ...fallbackStudy,
-            configurationSnapshot: {
-              ...state.lastConfiguration,
-              intersectionId: intersection.id,
-              inherited: true,
-              updatedAt: new Date().toISOString(),
-            },
-          }
-        : fallbackStudy;
-
-    const alignedStudy = rebuildStudyRows(configuredStudy);
+    const freshStudy = createDefaultStudy(intersection.id, studyTemplate);
+    const alignedStudy = rebuildStudyRows({
+      ...freshStudy,
+      configurationSnapshot: { ...freshStudy.configurationSnapshot, inherited: false },
+    });
     return {
       ...alignedStudy,
       currentStep: 1,
