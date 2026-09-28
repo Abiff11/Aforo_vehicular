@@ -278,7 +278,6 @@ export function exportStudyWorkbook(study: Study, intersection: Intersection): X
     {
       programs: study.configurationSnapshot.programs,
       assignments: study.configurationSnapshot.signalMovementAssignments ?? [],
-      observedSaturationFlowPerLane: study.metadata.observedSaturationFlowPerLane,
     },
   );
   const workbook = XLSX.utils.book_new();

@@ -110,7 +110,6 @@ describe('exportStudyWorkbook calculation integrity', () => {
       {
         programs: study.configurationSnapshot.programs,
         assignments: study.configurationSnapshot.signalMovementAssignments ?? [],
-        observedSaturationFlowPerLane: study.metadata.observedSaturationFlowPerLane,
       },
     );
     const expectedGroup = summary.signalGroupIndicators?.[0];
