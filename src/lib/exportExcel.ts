@@ -5,8 +5,13 @@ import { calculateRowMotorizedTotal, calculateStudySummary } from './calculation
 const INCOMPLETE_WARNING = 'ESTUDIO INCOMPLETO — RESULTADOS PARCIALES — NO UTILIZAR COMO RESULTADO DEFINITIVO';
 const TDPA_WARNING = 'ESTIMACIÓN TDPA — NO SUSTITUYE UN AFORO DE INTERSECCIÓN EN CAMPO.';
 
-function rowsToSheet(rows: Array<Record<string, string | number | null>>): XLSX.WorkSheet {
-  return XLSX.utils.json_to_sheet(rows.map((row) => sanitizeRow(row)));
+function rowsToSheet(
+  rows: Array<Record<string, string | number | null>>,
+  widths?: number[],
+): XLSX.WorkSheet {
+  const sheet = XLSX.utils.json_to_sheet(rows.map((row) => sanitizeRow(row)));
+  if (widths) sheet['!cols'] = widths.map((wch) => ({ wch }));
+  return sheet;
 }
 
 function sanitizeRow(row: Record<string, string | number | null>): Record<string, string | number> {
@@ -41,6 +46,18 @@ function statusLabel(study: Study, summary: StudySummary): string {
   if (study.status === 'validated') return 'Validado';
   if (study.status === 'incomplete' || summary.isPartial) return 'Incompleto';
   return 'Borrador';
+}
+
+function rowStateLabel(state: 'complete' | 'incomplete' | 'error' | undefined): string {
+  if (state === 'complete') return 'Completo';
+  if (state === 'error') return 'Error';
+  return 'Incompleto';
+}
+
+function rowOriginLabel(state: 'complete' | 'incomplete' | 'error' | undefined): string {
+  if (state === 'complete') return 'Captura de campo';
+  if (state === 'error') return 'Captura con error';
+  return 'Captura incompleta';
 }
 
 function shouldShowIncompleteWarning(study: Study, summary: StudySummary): boolean {
@@ -87,7 +104,7 @@ function buildFichaSheet(study: Study, intersection: Intersection, summary: Stud
   rows.push([]);
 
   pushSection(`3. AFORO VEHICULAR – INTERVALOS DE ${study.metadata.intervalMinutes} MINUTOS`);
-  rows.push(['Intervalo', 'Izquierda', 'Frente', 'Derecha', 'Retorno', 'Total', 'Pesados', 'Motos', 'Bicicletas', 'Peatones', 'Observaciones']);
+  rows.push(['Intervalo', 'Izquierda', 'Frente', 'Derecha', 'Retorno', 'Total calculado', 'Pesados', 'Motos', 'Bicicletas', 'Peatones', 'Observaciones']);
   for (const interval of summary.byInterval) {
     const captured = interval.complete === true;
     rows.push([
@@ -112,8 +129,8 @@ function buildFichaSheet(study: Study, intersection: Intersection, summary: Stud
     isObserved ? summary.totalMotorized : 'N/D',
     '',
     'RESUMEN POR MOVIMIENTO',
-    'Volumen capturado',
-    '% sobre volumen capturado',
+    'Volumen completo',
+    '% sobre volumen completo',
   ]);
   rows.push([
     `Máximo intervalo ${study.metadata.intervalMinutes} min:`, isObserved ? (summary.peakInterval?.volume ?? 'N/D') : 'N/D', '',
@@ -191,34 +208,34 @@ function buildFichaSheet(study: Study, intersection: Intersection, summary: Stud
 function buildDashboardRows(study: Study, summary: StudySummary): Array<Record<string, string | number | null>> {
   const source = study.source ?? 'observed';
   const rows: Array<Record<string, string | number | null>> = [
-    { Indicador: 'Fuente', Valor: sourceLabel(study) },
-    { Indicador: 'Estado', Valor: statusLabel(study, summary) },
-    { Indicador: 'Completitud (%)', Valor: summary.completionPercent },
-    { Indicador: 'Filas completas', Valor: summary.completeRows },
-    { Indicador: 'Filas incompletas', Valor: summary.incompleteRows },
-    { Indicador: 'Filas con error', Valor: summary.errorRows },
-    { Indicador: 'Volumen total observado', Valor: source === 'observed' && summary.isComplete ? summary.totalMotorized : 'N/D' },
-    { Indicador: 'Volumen registrado parcial', Valor: source === 'observed' && !summary.isComplete ? summary.totalMotorized : 'N/D' },
-    { Indicador: 'Hora pico observada', Valor: source === 'observed' ? (summary.peakHour?.label ?? 'N/D') : 'N/D' },
-    { Indicador: 'Volumen hora pico observado', Valor: source === 'observed' ? (summary.peakHour?.volume ?? 'N/D') : 'N/D' },
-    { Indicador: 'FHP observado', Valor: source === 'observed' ? (summary.peakHour?.factor ?? 'N/D') : 'N/D' },
-    { Indicador: 'Intervalo máximo válido', Valor: source === 'observed' ? (summary.peakInterval?.label ?? 'N/D') : 'N/D' },
-    { Indicador: 'Pesados capturados', Valor: source === 'observed' ? summary.totalHeavy : 'N/D' },
-    { Indicador: 'Motos capturadas', Valor: source === 'observed' ? summary.totalMotorcycles : 'N/D' },
-    { Indicador: 'Bicicletas capturadas', Valor: source === 'observed' ? summary.totalBicycles : 'N/D' },
-    { Indicador: 'Peatones capturados', Valor: source === 'observed' ? summary.totalPedestrians : 'N/D' },
+    { Indicador: 'Fuente', Valor: sourceLabel(study), Origen: 'Metadato' },
+    { Indicador: 'Estado', Valor: statusLabel(study, summary), Origen: 'Estado del estudio' },
+    { Indicador: 'Completitud (%)', Valor: summary.completionPercent, Origen: 'Calculado' },
+    { Indicador: 'Filas completas', Valor: summary.completeRows, Origen: 'Calculado' },
+    { Indicador: 'Filas incompletas', Valor: summary.incompleteRows, Origen: 'Calculado' },
+    { Indicador: 'Filas con error', Valor: summary.errorRows, Origen: 'Calculado' },
+    { Indicador: 'Volumen total observado', Valor: source === 'observed' && summary.isComplete ? summary.totalMotorized : 'N/D', Origen: 'Calculado' },
+    { Indicador: 'Volumen registrado parcial', Valor: source === 'observed' && !summary.isComplete ? summary.totalMotorized : 'N/D', Origen: 'Capturado' },
+    { Indicador: 'Hora pico observada', Valor: source === 'observed' ? (summary.peakHour?.label ?? 'N/D') : 'N/D', Origen: 'Calculado' },
+    { Indicador: 'Volumen hora pico observado', Valor: source === 'observed' ? (summary.peakHour?.volume ?? 'N/D') : 'N/D', Origen: 'Calculado' },
+    { Indicador: 'FHP observado', Valor: source === 'observed' ? (summary.peakHour?.factor ?? 'N/D') : 'N/D', Origen: 'Calculado' },
+    { Indicador: 'Intervalo máximo válido', Valor: source === 'observed' ? (summary.peakInterval?.label ?? 'N/D') : 'N/D', Origen: 'Calculado' },
+    { Indicador: 'Pesados capturados', Valor: source === 'observed' ? summary.totalHeavy : 'N/D', Origen: 'Capturado' },
+    { Indicador: 'Motos capturadas', Valor: source === 'observed' ? summary.totalMotorcycles : 'N/D', Origen: 'Capturado' },
+    { Indicador: 'Bicicletas capturadas', Valor: source === 'observed' ? summary.totalBicycles : 'N/D', Origen: 'Capturado' },
+    { Indicador: 'Peatones capturados', Valor: source === 'observed' ? summary.totalPedestrians : 'N/D', Origen: 'Capturado' },
   ];
 
   if (study.tdpaEstimate) {
     rows.push(
-      { Indicador: 'TDPA', Valor: study.tdpaEstimate.dailyTraffic },
-      { Indicador: "K'", Valor: study.tdpaEstimate.designHourFactor },
-      { Indicador: 'D', Valor: study.tdpaEstimate.directionalDistribution },
-      { Indicador: 'Volumen hora de diseño estimado', Valor: study.tdpaEstimate.designHourTotal },
-      { Indicador: 'Dirección principal estimada', Valor: study.tdpaEstimate.mainDirectionHour },
-      { Indicador: 'Dirección opuesta estimada', Valor: study.tdpaEstimate.oppositeDirectionHour },
-      { Indicador: 'Motos hora estimadas', Valor: study.tdpaEstimate.hourlyMotorcycles },
-      { Indicador: 'Pesados hora estimados', Valor: study.tdpaEstimate.hourlyHeavyVehicles },
+      { Indicador: 'TDPA', Valor: study.tdpaEstimate.dailyTraffic, Origen: 'Estimado' },
+      { Indicador: "K'", Valor: study.tdpaEstimate.designHourFactor, Origen: 'Estimado' },
+      { Indicador: 'D', Valor: study.tdpaEstimate.directionalDistribution, Origen: 'Estimado' },
+      { Indicador: 'Volumen hora de diseño estimado', Valor: study.tdpaEstimate.designHourTotal, Origen: 'Estimado' },
+      { Indicador: 'Dirección principal estimada', Valor: study.tdpaEstimate.mainDirectionHour, Origen: 'Estimado' },
+      { Indicador: 'Dirección opuesta estimada', Valor: study.tdpaEstimate.oppositeDirectionHour, Origen: 'Estimado' },
+      { Indicador: 'Motos hora estimadas', Valor: study.tdpaEstimate.hourlyMotorcycles, Origen: 'Estimado' },
+      { Indicador: 'Pesados hora estimados', Valor: study.tdpaEstimate.hourlyHeavyVehicles, Origen: 'Estimado' },
     );
   }
   return rows;
@@ -270,6 +287,35 @@ function buildIndicatorsRows(summary: StudySummary): Array<Record<string, string
   return [...groupRows, ...cycleRows];
 }
 
+function applyDashboardFormats(sheet: XLSX.WorkSheet): void {
+  sheet['!cols'] = [{ wch: 34 }, { wch: 24 }, { wch: 22 }];
+  const range = XLSX.utils.decode_range(sheet['!ref'] ?? 'A1:A1');
+  for (let row = range.s.r + 1; row <= range.e.r; row += 1) {
+    const indicatorCell = sheet[XLSX.utils.encode_cell({ r: row, c: 0 })];
+    const valueCell = sheet[XLSX.utils.encode_cell({ r: row, c: 1 })];
+    if (indicatorCell?.v === 'Completitud (%)' && valueCell?.t === 'n') valueCell.z = '0.0';
+    if ((indicatorCell?.v === 'FHP observado' || indicatorCell?.v === "K'" || indicatorCell?.v === 'D') && valueCell?.t === 'n') valueCell.z = '0.000';
+  }
+}
+
+function applyIndicatorFormats(sheet: XLSX.WorkSheet): void {
+  sheet['!cols'] = Array.from({ length: 18 }, (_, index) => ({ wch: index < 5 ? 18 : 16 }));
+  const range = XLSX.utils.decode_range(sheet['!ref'] ?? 'A1:A1');
+  const headers = new Map<string, number>();
+  for (let col = range.s.c; col <= range.e.c; col += 1) {
+    const cell = sheet[XLSX.utils.encode_cell({ r: 0, c: col })];
+    if (typeof cell?.v === 'string') headers.set(cell.v, col);
+  }
+  for (const label of ['g/C', 'v/c']) {
+    const col = headers.get(label);
+    if (col === undefined) continue;
+    for (let row = 1; row <= range.e.r; row += 1) {
+      const cell = sheet[XLSX.utils.encode_cell({ r: row, c: col })];
+      if (cell?.t === 'n') cell.z = '0.000';
+    }
+  }
+}
+
 export function exportStudyWorkbook(study: Study, intersection: Intersection): XLSX.WorkBook {
   const summary = calculateStudySummary(
     study.rows,
@@ -283,41 +329,46 @@ export function exportStudyWorkbook(study: Study, intersection: Intersection): X
   const workbook = XLSX.utils.book_new();
 
   XLSX.utils.book_append_sheet(workbook, buildFichaSheet(study, intersection, summary), '01_FICHA_TECNICA');
-  XLSX.utils.book_append_sheet(workbook, rowsToSheet(buildDashboardRows(study, summary)), '02_DASHBOARD');
+
+  const dashboardSheet = rowsToSheet(buildDashboardRows(study, summary));
+  applyDashboardFormats(dashboardSheet);
+  XLSX.utils.book_append_sheet(workbook, dashboardSheet, '02_DASHBOARD');
 
   const accessById = new Map(study.configurationSnapshot.accesses.map((access) => [access.id, access]));
   const rowStateById = new Map(summary.rowValidation?.map((result) => [result.rowId, result.state]) ?? []);
-  XLSX.utils.book_append_sheet(
-    workbook,
-    rowsToSheet(
-      study.rows.map((row) => {
-        const access = accessById.get(row.accessId) ?? study.configurationSnapshot.accesses[0];
-        const complete = rowStateById.get(row.id) === 'complete';
-        return {
-          Intervalo: row.intervalLabel,
-          Acceso: row.accessName,
-          Izquierda: row.left,
-          Frente: row.through,
-          Derecha: row.right,
-          Retorno: row.uTurn,
-          Total: complete && access ? calculateRowMotorizedTotal(row, access) : null,
-          Pesados: row.heavy,
-          Motos: row.motorcycles,
-          Bicicletas: row.bicycles,
-          Peatones: row.pedestrians,
-          ColaMaxima: row.maxQueue,
-          ColaPromedio: row.averageQueue,
-          LongitudCola: row.queueLength,
-          DetenidosPorCiclo: row.stoppedVehiclesPerCycle,
-          CicloObservado: row.observedCycle,
-          ProgramaObservado: row.observedProgram || null,
-          Observaciones: row.notes || null,
-          EstadoFila: rowStateById.get(row.id) ?? 'incomplete',
-        };
-      }),
-    ),
-    '03_AFORO_DETALLADO',
+  const detailedSheet = rowsToSheet(
+    study.rows.map((row) => {
+      const access = accessById.get(row.accessId) ?? study.configurationSnapshot.accesses[0];
+      const state = rowStateById.get(row.id) ?? 'incomplete';
+      const complete = state === 'complete';
+      return {
+        Intervalo: row.intervalLabel,
+        Acceso: row.accessName,
+        OrigenDato: rowOriginLabel(state),
+        EstadoDato: rowStateLabel(state),
+        Izquierda: row.left,
+        Frente: row.through,
+        Derecha: row.right,
+        Retorno: row.uTurn,
+        Total: complete && access ? calculateRowMotorizedTotal(row, access) : null,
+        TipoTotal: complete && access ? 'Calculado' : null,
+        Pesados: row.heavy,
+        Motos: row.motorcycles,
+        Bicicletas: row.bicycles,
+        Peatones: row.pedestrians,
+        ColaMaxima: row.maxQueue,
+        ColaPromedio: row.averageQueue,
+        LongitudCola: row.queueLength,
+        DetenidosPorCiclo: row.stoppedVehiclesPerCycle,
+        CicloObservado: row.observedCycle,
+        ProgramaObservado: row.observedProgram || null,
+        Observaciones: row.notes || null,
+        EstadoFila: state,
+      };
+    }),
+    [16, 20, 20, 14, 12, 12, 12, 12, 12, 14, 12, 12, 12, 12, 14, 14, 14, 18, 16, 20, 28, 14],
   );
+  XLSX.utils.book_append_sheet(workbook, detailedSheet, '03_AFORO_DETALLADO');
 
   const programmingRows: Array<Record<string, string | number | null>> = [
     ...study.configurationSnapshot.programs.map((program) => ({
@@ -380,7 +431,11 @@ export function exportStudyWorkbook(study: Study, intersection: Intersection): X
       Observaciones: null,
     })),
   ];
-  XLSX.utils.book_append_sheet(workbook, rowsToSheet(programmingRows), '04_PROGRAMACION');
+  XLSX.utils.book_append_sheet(
+    workbook,
+    rowsToSheet(programmingRows, [24, 18, 12, 12, 12, 10, 18, 12, 12, 12, 20, 18, 18, 16, 18, 20, 30]),
+    '04_PROGRAMACION',
+  );
 
   XLSX.utils.book_append_sheet(
     workbook,
@@ -394,23 +449,28 @@ export function exportStudyWorkbook(study: Study, intersection: Intersection): X
         DetenidosPorCiclo: queue.stoppedVehiclesPerCycle,
         Observaciones: queue.notes || null,
       })),
+      [20, 12, 14, 14, 16, 20, 30],
     ),
     '05_COLAS_OPERACION',
   );
 
-  XLSX.utils.book_append_sheet(workbook, rowsToSheet(buildIndicatorsRows(summary)), '06_INDICADORES');
+  const indicatorsSheet = rowsToSheet(buildIndicatorsRows(summary));
+  applyIndicatorFormats(indicatorsSheet);
+  XLSX.utils.book_append_sheet(workbook, indicatorsSheet, '06_INDICADORES');
 
   XLSX.utils.book_append_sheet(
     workbook,
     rowsToSheet([
       { Tema: 'Captura', Descripcion: '0 significa observado sin unidades; N/D significa faltante o no aplicable.' },
+      { Tema: 'Origen del dato', Descripcion: 'Capturado identifica valores ingresados en campo; Calculado identifica resultados derivados; Estimado identifica TDPA y sus derivados.' },
+      { Tema: 'Estado', Descripcion: 'Completo, Incompleto y Error describen la validación de cada fila; el estado general se exporta por separado.' },
       { Tema: 'Resultados parciales', Descripcion: 'Los intervalos incompletos no alimentan hora pico ni FHP definitivos.' },
       { Tema: 'Hora pico', Descripcion: 'Ventana móvil de 60 minutos formada sólo por intervalos completos y consecutivos.' },
       { Tema: 'FHP', Descripcion: 'Para 15 min: volumen de hora pico / (4 × máximo intervalo dentro de esa hora).' },
       { Tema: 'Verde efectivo', Descripcion: 'No se infiere del verde programado; se captura por grupo movimiento–fase.' },
       { Tema: 'Capacidad', Descripcion: 'c = s × N × g/C por grupo movimiento–fase; no se calcula capacidad agregada de toda la intersección.' },
       { Tema: 'TDPA', Descripcion: 'TDPA × K\' y D producen estimaciones de hora de diseño; no sustituyen un aforo de intersección.' },
-    ]),
+    ], [24, 100]),
     '07_INSTRUCTIVO',
   );
 
