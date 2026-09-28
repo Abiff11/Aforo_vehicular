@@ -19,6 +19,7 @@ import {
   calculateRoadTrafficProfile,
   createTrafficStudyForIntersection,
   parseRoadTrafficCsv,
+  validateTdpaIntersectionEstimate,
 } from '../lib/roadTrafficImport';
 import {
   addSignalMovementAssignment,
@@ -39,7 +40,7 @@ import {
   validateStudy,
 } from '../lib/study';
 import { createInitialState, loadStoredState, saveStoredState, STORAGE_KEY } from '../lib/storage';
-import { updateTdpaMovementPercentage } from '../lib/tdpaCorridorSettings';
+import { resolveTdpaCorridorSettings, updateTdpaMovementPercentage } from '../lib/tdpaCorridorSettings';
 import { validateStudyPeriod } from '../lib/time';
 import type { CorridorTrafficStudy, RoadTrafficProfile } from '../lib/roadTrafficImport';
 import type {
@@ -229,7 +230,16 @@ export function WizardApp() {
   const activeStudy = state.activeStudy ?? createDefaultStudy(UNASSIGNED_INTERSECTION_ID, studyTemplate);
   const selectedIntersection = customIntersections.find((intersection) => intersection.id === activeStudy.intersectionId) ?? null;
   const activeHelp = helpStepIndex === null ? null : wizardSteps[helpStepIndex];
-  const isGuidedTdpaStudy = (activeStudy.source ?? 'observed') === 'estimated_tdpa' && Boolean(selectedIntersection?.linkedCsvFileName);
+  const isTdpaStudy = (activeStudy.source ?? 'observed') === 'estimated_tdpa';
+  const isGuidedTdpaStudy = isTdpaStudy && Boolean(selectedIntersection?.linkedCsvFileName);
+  const tdpaSettings = isTdpaStudy ? resolveTdpaCorridorSettings(activeStudy) : null;
+  const tdpaValidation = isTdpaStudy && tdpaSettings
+    ? validateTdpaIntersectionEstimate(
+        activeStudy.tdpaEstimate,
+        activeStudy.configurationSnapshot.accesses,
+        tdpaSettings,
+      )
+    : null;
   const nextWizardStep = wizardSteps[activeStudy.currentStep + 1] ?? null;
 
   const summary = useMemo(
@@ -504,6 +514,7 @@ export function WizardApp() {
   function canNavigateToStep(index: number): boolean {
     if (!selectedIntersection && index > 1) return false;
     if (isGuidedTdpaStudy && index > activeStudy.currentStep + 1) return false;
+    if (isGuidedTdpaStudy && activeStudy.currentStep === 5 && index > 5 && !tdpaValidation?.valid) return false;
     return true;
   }
 
@@ -802,7 +813,7 @@ export function WizardApp() {
                     <small>El CSV genera una estimación TDPA independiente. No crea giros, peatones, bicicletas, intervalos de 15 min ni FHP observado.</small>
                   </div>
                   {roadTrafficImportError && <p className="warning"><AlertTriangle size={16} />{roadTrafficImportError}</p>}
-                  {(activeStudy.source ?? 'observed') === 'estimated_tdpa' && selectedIntersection.linkedCsvFileName && (
+                  {isTdpaStudy && selectedIntersection.linkedCsvFileName && (
                     <div
                       aria-label="Guía posterior a importación TDPA"
                       className="result"
@@ -1013,181 +1024,270 @@ export function WizardApp() {
         )}
 
         {activeStudy.currentStep === 4 && (
-          <section>
-            <h2>Tabla unica de aforo</h2>
-            <p className="section-description">El programa observado es una nota operacional opcional y no sustituye el programa semafórico configurado.</p>
-            <div className="panel" role="status" aria-label="Estado de captura">
-              <div className="section-heading">
-                <div>
-                  <h3>Estado de captura</h3>
-                  <p>{summary.completeRows}/{activeStudy.rows.length} filas completas ({summary.completionPercent.toFixed(1)}%)</p>
-                </div>
-              </div>
-              {summary.isComplete ? (
-                <p className="result"><CheckCircle2 size={18} /> Captura obligatoria completa.</p>
+          isTdpaStudy ? (
+            <section>
+              <h2>Volumen horario estimado por acceso y movimiento</h2>
+              <p className="section-description">
+                Esta vista transforma el volumen de hora de diseño del TDPA mediante los sentidos y porcentajes definidos en Configuración. Los valores son estimados y no se escriben como conteos observados en la tabla de campo.
+              </p>
+              {tdpaValidation?.valid && tdpaValidation.estimate ? (
+                <>
+                  <div className="summary-grid">
+                    <div className="kpi"><strong>TDPA {tdpaValidation.estimate.referenceYear}</strong><br />Año de referencia</div>
+                    <div className="kpi"><strong>{tdpaValidation.estimate.designHourTotal.toLocaleString('es-MX')}</strong><br />veh/h de diseño</div>
+                    <div className="kpi"><strong>{tdpaValidation.estimate.mainDirectionHour.toLocaleString('es-MX')}</strong><br />veh/h sentido principal</div>
+                    <div className="kpi"><strong>{tdpaValidation.estimate.oppositeDirectionHour.toLocaleString('es-MX')}</strong><br />veh/h sentido opuesto</div>
+                  </div>
+                  <div className="table-wrap">
+                    <table aria-label="Volumen horario estimado TDPA">
+                      <thead>
+                        <tr>
+                          <th>Sentido</th><th>Acceso</th><th>Volumen horario</th><th>Izquierda</th><th>Frente</th><th>Derecha</th><th>Retorno</th><th>Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tdpaValidation.estimate.accesses.map((access) => {
+                          const movementTotal = Object.values(access.movements).reduce((sum, value) => sum + value, 0);
+                          return (
+                            <tr key={access.accessId}>
+                              <td>{access.direction === 'main' ? 'Principal' : 'Opuesto'}</td>
+                              <td>{access.accessName}</td>
+                              <td>{access.hourlyVolume.toLocaleString('es-MX')}</td>
+                              <td>{access.movements.left.toLocaleString('es-MX')}</td>
+                              <td>{access.movements.through.toLocaleString('es-MX')}</td>
+                              <td>{access.movements.right.toLocaleString('es-MX')}</td>
+                              <td>{access.movements.uTurn.toLocaleString('es-MX')}</td>
+                              <td><strong>{movementTotal.toLocaleString('es-MX')}</strong></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p className="result"><CheckCircle2 size={18} /> Los movimientos conservan el volumen horario de cada acceso y ambos sentidos conservan el volumen de hora de diseño.</p>
+                  <p className="warning"><AlertTriangle size={16} /> Estimación TDPA: estos valores no sustituyen una medición física de movimientos, peatones, bicicletas, colas o ciclos observados.</p>
+                </>
               ) : (
-                <p className="warning"><AlertTriangle size={16} /> {summary.incompleteRows} filas incompletas · {summary.errorRows} filas con error.</p>
+                <div className="panel">
+                  <h3>Configuración TDPA por revisar</h3>
+                  <p className="warning"><AlertTriangle size={16} /> No es posible calcular el reparto por movimiento hasta corregir la configuración.</p>
+                  <ul>{tdpaValidation?.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>
+                  <button className="primary" onClick={() => goToStep(2)} type="button">Revisar Configuración TDPA</button>
+                </div>
               )}
-            </div>
-            {(activeStudy.source ?? 'observed') === 'estimated_tdpa' && <p className="warning">Esta intersección tiene una estimación TDPA asociada. La tabla permanece vacía hasta que se realice captura de campo.</p>}
-            <div className="table-wrap capture">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Intervalo</th><th>Acceso</th><th>Izq</th><th>Frente</th><th>Der</th><th>Retorno</th><th>Total capturado</th><th>Pesados</th><th>Motos</th><th>Bicicletas</th><th>Peatones</th><th>Cola max</th><th>Cola prom</th><th>Longitud cola (m)</th><th>Det./ciclo</th><th>Ciclo obs.</th><th>Programa observado (opcional)</th><th>Observaciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activeStudy.rows.map((row) => {
-                    const access = activeStudy.configurationSnapshot.accesses.find((candidate) => candidate.id === row.accessId) ?? activeStudy.configurationSnapshot.accesses[0];
-                    const validation = rowValidationById.get(row.id);
-                    const rowState = validation?.state ?? 'incomplete';
-                    const rowIssues = validation?.issues ?? [];
-                    return (
-                      <tr className={`capture-row capture-row-${rowState}`} data-capture-state={rowState} key={row.id}>
-                        <td>{row.intervalLabel}</td><td>{row.accessName}</td>
-                        {(['left', 'through', 'right', 'uTurn'] as MovementKey[]).map((field) => {
-                          const fieldIssues = captureIssuesForField(rowIssues, field);
-                          const inputId = captureInputId(row.id, field);
-                          const errorId = `${inputId}-error`;
-                          return (
-                            <td key={field}>
-                              {access.movements[field] ? (
-                                <>
-                                  <input
-                                    aria-describedby={fieldIssues.length > 0 ? errorId : undefined}
-                                    aria-invalid={fieldIssues.length > 0}
-                                    aria-label={`${fullMovementLabels[field]} · ${row.intervalLabel} · ${row.accessName}`}
-                                    id={inputId}
-                                    min={0}
-                                    type="number"
-                                    value={row[field] ?? ''}
-                                    onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))}
-                                  />
-                                  {fieldIssues.length > 0 && <span className="sr-only" id={errorId}>{fieldIssues.join(' ')}</span>}
-                                </>
-                              ) : 'N/A'}
-                            </td>
-                          );
-                        })}
-                        <td>{calculateRowMotorizedTotal(row, access)}</td>
-                        {(['heavy', 'motorcycles', 'bicycles', 'pedestrians', 'maxQueue', 'averageQueue', 'queueLength', 'stoppedVehiclesPerCycle', 'observedCycle'] as Array<keyof CaptureRow>).map((field) => {
-                          const fieldIssues = captureIssuesForField(rowIssues, field);
-                          const inputId = captureInputId(row.id, field);
-                          const errorId = `${inputId}-error`;
-                          return (
-                            <td key={field}>
-                              <input
-                                aria-describedby={fieldIssues.length > 0 ? errorId : undefined}
-                                aria-invalid={fieldIssues.length > 0}
-                                aria-label={`${captureFieldLabels[field] ?? String(field)} · ${row.intervalLabel} · ${row.accessName}`}
-                                id={inputId}
-                                min={0}
-                                type="number"
-                                value={String(row[field] ?? '')}
-                                onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))}
-                              />
-                              {fieldIssues.length > 0 && <span className="sr-only" id={errorId}>{fieldIssues.join(' ')}</span>}
-                            </td>
-                          );
-                        })}
-                        <td>
-                          <input
-                            aria-label={`Programa observado opcional · ${row.intervalLabel} · ${row.accessName}`}
-                            id={captureInputId(row.id, 'observedProgram')}
-                            value={row.observedProgram}
-                            onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'observedProgram', event.target.value))}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            aria-label={`Observaciones · ${row.intervalLabel} · ${row.accessName}`}
-                            id={captureInputId(row.id, 'notes')}
-                            value={row.notes}
-                            onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'notes', event.target.value))}
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </section>
+            </section>
+          ) : (
+            <section>
+              <h2>Tabla unica de aforo</h2>
+              <p className="section-description">El programa observado es una nota operacional opcional y no sustituye el programa semafórico configurado.</p>
+              <div className="panel" role="status" aria-label="Estado de captura">
+                <div className="section-heading">
+                  <div>
+                    <h3>Estado de captura</h3>
+                    <p>{summary.completeRows}/{activeStudy.rows.length} filas completas ({summary.completionPercent.toFixed(1)}%)</p>
+                  </div>
+                </div>
+                {summary.isComplete ? (
+                  <p className="result"><CheckCircle2 size={18} /> Captura obligatoria completa.</p>
+                ) : (
+                  <p className="warning"><AlertTriangle size={16} /> {summary.incompleteRows} filas incompletas · {summary.errorRows} filas con error.</p>
+                )}
+              </div>
+              <div className="table-wrap capture">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Intervalo</th><th>Acceso</th><th>Izq</th><th>Frente</th><th>Der</th><th>Retorno</th><th>Total capturado</th><th>Pesados</th><th>Motos</th><th>Bicicletas</th><th>Peatones</th><th>Cola max</th><th>Cola prom</th><th>Longitud cola (m)</th><th>Det./ciclo</th><th>Ciclo obs.</th><th>Programa observado (opcional)</th><th>Observaciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeStudy.rows.map((row) => {
+                      const access = activeStudy.configurationSnapshot.accesses.find((candidate) => candidate.id === row.accessId) ?? activeStudy.configurationSnapshot.accesses[0];
+                      const validation = rowValidationById.get(row.id);
+                      const rowState = validation?.state ?? 'incomplete';
+                      const rowIssues = validation?.issues ?? [];
+                      return (
+                        <tr className={`capture-row capture-row-${rowState}`} data-capture-state={rowState} key={row.id}>
+                          <td>{row.intervalLabel}</td><td>{row.accessName}</td>
+                          {(['left', 'through', 'right', 'uTurn'] as MovementKey[]).map((field) => {
+                            const fieldIssues = captureIssuesForField(rowIssues, field);
+                            const inputId = captureInputId(row.id, field);
+                            const errorId = `${inputId}-error`;
+                            return (
+                              <td key={field}>
+                                {access.movements[field] ? (
+                                  <>
+                                    <input
+                                      aria-describedby={fieldIssues.length > 0 ? errorId : undefined}
+                                      aria-invalid={fieldIssues.length > 0}
+                                      aria-label={`${fullMovementLabels[field]} · ${row.intervalLabel} · ${row.accessName}`}
+                                      id={inputId}
+                                      min={0}
+                                      type="number"
+                                      value={row[field] ?? ''}
+                                      onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))}
+                                    />
+                                    {fieldIssues.length > 0 && <span className="sr-only" id={errorId}>{fieldIssues.join(' ')}</span>}
+                                  </>
+                                ) : 'N/A'}
+                              </td>
+                            );
+                          })}
+                          <td>{calculateRowMotorizedTotal(row, access)}</td>
+                          {(['heavy', 'motorcycles', 'bicycles', 'pedestrians', 'maxQueue', 'averageQueue', 'queueLength', 'stoppedVehiclesPerCycle', 'observedCycle'] as Array<keyof CaptureRow>).map((field) => {
+                            const fieldIssues = captureIssuesForField(rowIssues, field);
+                            const inputId = captureInputId(row.id, field);
+                            const errorId = `${inputId}-error`;
+                            return (
+                              <td key={field}>
+                                <input
+                                  aria-describedby={fieldIssues.length > 0 ? errorId : undefined}
+                                  aria-invalid={fieldIssues.length > 0}
+                                  aria-label={`${captureFieldLabels[field] ?? String(field)} · ${row.intervalLabel} · ${row.accessName}`}
+                                  id={inputId}
+                                  min={0}
+                                  type="number"
+                                  value={String(row[field] ?? '')}
+                                  onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, field, event.target.value))}
+                                />
+                                {fieldIssues.length > 0 && <span className="sr-only" id={errorId}>{fieldIssues.join(' ')}</span>}
+                              </td>
+                            );
+                          })}
+                          <td>
+                            <input
+                              aria-label={`Programa observado opcional · ${row.intervalLabel} · ${row.accessName}`}
+                              id={captureInputId(row.id, 'observedProgram')}
+                              value={row.observedProgram}
+                              onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'observedProgram', event.target.value))}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              aria-label={`Observaciones · ${row.intervalLabel} · ${row.accessName}`}
+                              id={captureInputId(row.id, 'notes')}
+                              value={row.notes}
+                              onChange={(event) => setActiveStudy(updateStudyRow(activeStudy, row.id, 'notes', event.target.value))}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )
         )}
 
         {activeStudy.currentStep === 5 && (
-          <section>
-            <div className="section-heading">
-              <div><h2>Validacion</h2><p>Estado del estudio: {studyStatusLabel(activeStudy)}</p></div>
-              <button className="primary" onClick={validateCurrentStudy} type="button">Validar estudio</button>
-            </div>
-            {(activeStudy.source ?? 'observed') === 'estimated_tdpa' && <p className="warning">Una estimación TDPA no puede validarse como aforo observado.</p>}
-            {activeStudy.legacyUnverified && <p className="warning">Estudio legado pendiente de revisar. Confirme los ceros históricos antes de validarlo.</p>}
-
-            {captureRowsToReview.length === 0 ? (
-              <p className="result"><CheckCircle2 size={18} /> Captura completa: {summary.completeRows}/{activeStudy.rows.length} filas.</p>
-            ) : (
-              <div className="panel">
-                <div className="section-heading">
-                  <div>
-                    <h3>Captura por revisar</h3>
-                    <p className="warning"><AlertTriangle size={16} /> {summary.incompleteRows} filas incompletas · {summary.errorRows} filas con error.</p>
-                  </div>
-                  <button className="primary" onClick={() => goToStep(4)} type="button">Ir a Aforo</button>
+          isTdpaStudy ? (
+            <section>
+              <div className="section-heading">
+                <div>
+                  <h2>Validación de estimación TDPA</h2>
+                  <p>Se revisa la coherencia de la fuente TDPA y de la distribución configurada; no se exige captura física.</p>
                 </div>
-                <ul className="capture-review-list">
-                  {captureRowsToReview.map((result) => {
-                    const rowLabel = result.row ? `${result.row.intervalLabel} · ${result.row.accessName}` : result.rowId;
-                    return (
-                      <li key={result.rowId}>
-                        <div className="capture-review-heading">
-                          <strong>{rowLabel}</strong>
-                          <span className={`capture-state capture-state-${result.state}`}>{result.state === 'error' ? 'Error' : 'Incompleta'}</span>
-                        </div>
-                        <ul>
-                          {result.issues.map((issue, index) => (
-                            <li key={`${result.rowId}-${index}-${issue}`}>
-                              <span>{issue}</span>
-                              <button
-                                aria-label={`Corregir ${issue} · ${rowLabel}`}
-                                className="validation-link"
-                                onClick={() => focusCaptureIssue(result.rowId, issue)}
-                                type="button"
-                              >
-                                Corregir
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </li>
-                    );
-                  })}
-                </ul>
               </div>
-            )}
+              {tdpaValidation?.valid ? (
+                <>
+                  <p className="result" role="status"><CheckCircle2 size={18} /> Estimación TDPA lista para resultados.</p>
+                  <section className="panel">
+                    <h3>Comprobaciones de la estimación</h3>
+                    <ul>
+                      <li>Existe un registro TDPA asociado con volumen de hora de diseño.</li>
+                      <li>Los sentidos principal y opuesto utilizan accesos diferentes.</li>
+                      <li>Cada acceso seleccionado distribuye exactamente 100% entre sus movimientos habilitados.</li>
+                      <li>La suma de movimientos conserva el volumen horario de cada acceso.</li>
+                      <li>La suma de ambos sentidos coincide con el volumen de hora de diseño.</li>
+                    </ul>
+                  </section>
+                </>
+              ) : (
+                <section className="panel">
+                  <h3>Configuración TDPA por revisar</h3>
+                  <p className="warning"><AlertTriangle size={16} /> Corrige estas condiciones antes de pasar a Resultados.</p>
+                  <ul>{tdpaValidation?.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>
+                  <button className="primary" onClick={() => goToStep(2)} type="button">Revisar Configuración TDPA</button>
+                </section>
+              )}
+              <section className="panel">
+                <h3>Información no inferida por TDPA</h3>
+                <p>Peatones, bicicletas, colas, ciclos observados y otros datos propios del trabajo de campo permanecen como no observados. El sistema no inventa esos valores para completar la estimación.</p>
+              </section>
+            </section>
+          ) : (
+            <section>
+              <div className="section-heading">
+                <div><h2>Validacion</h2><p>Estado del estudio: {studyStatusLabel(activeStudy)}</p></div>
+                <button className="primary" onClick={validateCurrentStudy} type="button">Validar estudio</button>
+              </div>
+              {activeStudy.legacyUnverified && <p className="warning">Estudio legado pendiente de revisar. Confirme los ceros históricos antes de validarlo.</p>}
 
-            {(summary.signalValidationIssues?.length ?? 0) > 0 ? (
-              <div className="panel">
-                <div className="section-heading">
-                  <div>
-                    <h3>Configuración semafórica por revisar</h3>
-                    <p className="warning"><AlertTriangle size={16} /> Estas observaciones son independientes de la captura de campo.</p>
+              {captureRowsToReview.length === 0 ? (
+                <p className="result"><CheckCircle2 size={18} /> Captura completa: {summary.completeRows}/{activeStudy.rows.length} filas.</p>
+              ) : (
+                <div className="panel">
+                  <div className="section-heading">
+                    <div>
+                      <h3>Captura por revisar</h3>
+                      <p className="warning"><AlertTriangle size={16} /> {summary.incompleteRows} filas incompletas · {summary.errorRows} filas con error.</p>
+                    </div>
+                    <button className="primary" onClick={() => goToStep(4)} type="button">Ir a Aforo</button>
                   </div>
-                  <button className="primary" onClick={() => goToStep(3)} type="button">Ir a Semáforo</button>
+                  <ul className="capture-review-list">
+                    {captureRowsToReview.map((result) => {
+                      const rowLabel = result.row ? `${result.row.intervalLabel} · ${result.row.accessName}` : result.rowId;
+                      return (
+                        <li key={result.rowId}>
+                          <div className="capture-review-heading">
+                            <strong>{rowLabel}</strong>
+                            <span className={`capture-state capture-state-${result.state}`}>{result.state === 'error' ? 'Error' : 'Incompleta'}</span>
+                          </div>
+                          <ul>
+                            {result.issues.map((issue, index) => (
+                              <li key={`${result.rowId}-${index}-${issue}`}>
+                                <span>{issue}</span>
+                                <button
+                                  aria-label={`Corregir ${issue} · ${rowLabel}`}
+                                  className="validation-link"
+                                  onClick={() => focusCaptureIssue(result.rowId, issue)}
+                                  type="button"
+                                >
+                                  Corregir
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </div>
-                <ul>
-                  {summary.signalValidationIssues?.map((issue, index) => (
-                    <li key={`${issue.code}-${issue.programId ?? issue.assignmentId ?? 'general'}-${index}`}>{issue.message}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : (
-              <p className="result"><CheckCircle2 size={18} /> Sin observaciones de configuración semafórica.</p>
-            )}
+              )}
 
-            <div className="summary-grid">{summary.dataQuality.map((item) => <div className="kpi" key={item}>{item}</div>)}</div>
-          </section>
+              {(summary.signalValidationIssues?.length ?? 0) > 0 ? (
+                <div className="panel">
+                  <div className="section-heading">
+                    <div>
+                      <h3>Configuración semafórica por revisar</h3>
+                      <p className="warning"><AlertTriangle size={16} /> Estas observaciones son independientes de la captura de campo.</p>
+                    </div>
+                    <button className="primary" onClick={() => goToStep(3)} type="button">Ir a Semáforo</button>
+                  </div>
+                  <ul>
+                    {summary.signalValidationIssues?.map((issue, index) => (
+                      <li key={`${issue.code}-${issue.programId ?? issue.assignmentId ?? 'general'}-${index}`}>{issue.message}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p className="result"><CheckCircle2 size={18} /> Sin observaciones de configuración semafórica.</p>
+              )}
+
+              <div className="summary-grid">{summary.dataQuality.map((item) => <div className="kpi" key={item}>{item}</div>)}</div>
+            </section>
+          )
         )}
 
         {activeStudy.currentStep === 6 && (
@@ -1214,7 +1314,7 @@ export function WizardApp() {
             <h2>Exportar estudio</h2>
             <p>Genera el XLSX con ficha tecnica, dashboard, aforo detallado, programacion, colas, ciclos, indicadores formales e instructivo.</p>
             {summary.isPartial && (activeStudy.source ?? 'observed') === 'observed' && <p className="warning">El Excel se exportará como estudio incompleto con resultados parciales.</p>}
-            {(activeStudy.source ?? 'observed') === 'estimated_tdpa' && <p className="warning">El Excel identificará los datos como estimación TDPA, no como aforo observado.</p>}
+            {isTdpaStudy && <p className="warning">El Excel identificará los datos como estimación TDPA, no como aforo observado.</p>}
             <button className="primary" disabled={!selectedIntersection} onClick={exportExcel} type="button"><Download size={16} /> Exportar Excel</button>
           </section>
         )}
@@ -1223,7 +1323,11 @@ export function WizardApp() {
       <footer className="footer-nav">
         <button disabled={activeStudy.currentStep === 0} onClick={() => goToStep(activeStudy.currentStep - 1)} type="button"><ArrowLeft size={16} /> Anterior</button>
         <span>{selectedIntersection ? `${selectedIntersection.id} · ${selectedIntersection.name || 'Sin nombre'}` : 'Datos generales del estudio'}</span>
-        <button disabled={activeStudy.currentStep === wizardSteps.length - 1 || (activeStudy.currentStep >= 1 && !selectedIntersection)} onClick={() => goToStep(activeStudy.currentStep + 1)} type="button">
+        <button
+          disabled={activeStudy.currentStep === wizardSteps.length - 1 || !canNavigateToStep(activeStudy.currentStep + 1)}
+          onClick={() => goToStep(activeStudy.currentStep + 1)}
+          type="button"
+        >
           {nextWizardStep ? `Continuar a ${nextWizardStep.label}` : 'Siguiente'} <ArrowRight size={16} />
         </button>
       </footer>

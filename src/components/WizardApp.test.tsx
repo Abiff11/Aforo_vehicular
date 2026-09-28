@@ -271,7 +271,7 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(screen.getByText('Estado del estudio: Incompleto')).toBeInTheDocument();
   });
 
-  it('keeps TDPA import in Interseccion and guides the user through the steps in order', async () => {
+  it('keeps TDPA import guided and presents estimated aforo before validation', async () => {
     renderWithIntersection();
     fireEvent.change(screen.getByLabelText('Importar CSV TDPA'), {
       target: { files: [new File([roadTrafficCsv], 'tdpa.csv', { type: 'text/csv' })] },
@@ -294,15 +294,48 @@ describe('WizardApp ficha aforo capture flow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Continuar a Semaforo' }));
     fireEvent.click(screen.getByRole('button', { name: 'Continuar a Aforo' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Continuar a Validar' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Continuar a Resultados' }));
 
+    expect(screen.getByRole('heading', { name: 'Volumen horario estimado por acceso y movimiento' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Tabla unica de aforo' })).not.toBeInTheDocument();
+    const estimateTable = screen.getByRole('table', { name: 'Volumen horario estimado TDPA' });
+    expect(within(estimateTable).getByText('776')).toBeInTheDocument();
+    expect(within(estimateTable).getByText('742')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar a Validar' }));
+    expect(screen.getByRole('heading', { name: 'Validación de estimación TDPA' })).toBeInTheDocument();
+    expect(screen.getByText('Estimación TDPA lista para resultados.')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Captura por revisar' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continuar a Resultados' })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar a Resultados' }));
     expect(screen.getByText('ESTIMACIÓN TDPA — NO SUSTITUYE UN AFORO DE INTERSECCIÓN EN CAMPO.')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Estimación TDPA' })).toBeInTheDocument();
     expect(screen.getByText('Volumen hora de diseño estimado')).toBeInTheDocument();
     expect(screen.getByText('1,898')).toBeInTheDocument();
     expect(screen.getByText('T. Aut. Cuacnopalan - Oaxaca')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Volumen por intervalo' })).not.toBeInTheDocument();
+  });
+
+  it('blocks TDPA results when movement distribution is invalid and guides back to Configuracion', async () => {
+    renderWithIntersection();
+    fireEvent.change(screen.getByLabelText('Importar CSV TDPA'), {
+      target: { files: [new File([roadTrafficCsv], 'tdpa.csv', { type: 'text/csv' })] },
+    });
+    await waitFor(() => expect(screen.getByText('tdpa.csv vinculado')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar a Configuracion' }));
+    fireEvent.change(screen.getByLabelText('Porcentaje Frente Norte'), { target: { value: '70' } });
+    expect(screen.getByText(/Falta asignar 10%/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar a Semaforo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar a Aforo' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar a Validar' }));
+
+    expect(screen.getByRole('heading', { name: 'Validación de estimación TDPA' })).toBeInTheDocument();
+    expect(screen.getByText(/debe sumar exactamente 100%/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continuar a Resultados' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar Configuración TDPA' }));
+    expect(screen.getByRole('heading', { name: 'Configuracion de accesos' })).toBeInTheDocument();
   });
 
   it('withholds definitive observed charts while the capture is incomplete', () => {

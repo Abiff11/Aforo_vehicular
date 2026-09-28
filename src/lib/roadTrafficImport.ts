@@ -43,6 +43,12 @@ export interface IntersectionTrafficEstimate {
   accesses: EstimatedAccessFlow[];
 }
 
+export interface TdpaIntersectionValidation {
+  valid: boolean;
+  issues: string[];
+  estimate: IntersectionTrafficEstimate | null;
+}
+
 export interface RoadTrafficRecord {
   road: string;
   roadKey: string;
@@ -395,6 +401,76 @@ export function createIntersectionTrafficEstimate(
       createEstimatedAccessFlow(mainAccess, 'main', profile.mainDirectionHour, mainDistribution),
       createEstimatedAccessFlow(oppositeAccess, 'opposite', profile.oppositeDirectionHour, oppositeDistribution),
     ],
+  };
+}
+
+export function validateTdpaIntersectionEstimate(
+  tdpaEstimate: TdpaEstimate | null | undefined,
+  accesses: AccessConfig[],
+  settings: CorridorEstimationSettings,
+): TdpaIntersectionValidation {
+  const issues: string[] = [];
+
+  if (!tdpaEstimate) {
+    return { valid: false, issues: ['No existe una estimación TDPA asociada.'], estimate: null };
+  }
+
+  if (settings.mainDirectionAccessId === settings.oppositeDirectionAccessId) {
+    issues.push('Los sentidos principal y opuesto deben usar accesos distintos.');
+  }
+
+  const mainAccess = accesses.find((access) => access.id === settings.mainDirectionAccessId);
+  const oppositeAccess = accesses.find((access) => access.id === settings.oppositeDirectionAccessId);
+  if (!mainAccess) issues.push(`Acceso principal no encontrado: ${settings.mainDirectionAccessId}.`);
+  if (!oppositeAccess) issues.push(`Acceso opuesto no encontrado: ${settings.oppositeDirectionAccessId}.`);
+
+  if (mainAccess) {
+    const distribution = settings.movementDistributionByAccess?.[mainAccess.id] ?? DEFAULT_MOVEMENT_DISTRIBUTION;
+    validateMovementDistribution(distribution, mainAccess.movements)
+      .forEach((issue) => issues.push(`${mainAccess.name}: ${issue}`));
+  }
+  if (oppositeAccess && oppositeAccess.id !== mainAccess?.id) {
+    const distribution = settings.movementDistributionByAccess?.[oppositeAccess.id] ?? DEFAULT_MOVEMENT_DISTRIBUTION;
+    validateMovementDistribution(distribution, oppositeAccess.movements)
+      .forEach((issue) => issues.push(`${oppositeAccess.name}: ${issue}`));
+  }
+
+  if (tdpaEstimate.mainDirectionHour + tdpaEstimate.oppositeDirectionHour !== tdpaEstimate.designHourTotal) {
+    issues.push('La suma de ambos sentidos no coincide con el volumen hora de diseño.');
+  }
+
+  if (issues.length > 0 || !mainAccess || !oppositeAccess) {
+    return { valid: false, issues, estimate: null };
+  }
+
+  const mainDistribution = settings.movementDistributionByAccess?.[mainAccess.id] ?? DEFAULT_MOVEMENT_DISTRIBUTION;
+  const oppositeDistribution = settings.movementDistributionByAccess?.[oppositeAccess.id] ?? DEFAULT_MOVEMENT_DISTRIBUTION;
+  const estimate: IntersectionTrafficEstimate = {
+    referenceYear: tdpaEstimate.referenceYear,
+    designHourTotal: tdpaEstimate.designHourTotal,
+    mainDirectionHour: tdpaEstimate.mainDirectionHour,
+    oppositeDirectionHour: tdpaEstimate.oppositeDirectionHour,
+    accesses: [
+      createEstimatedAccessFlow(mainAccess, 'main', tdpaEstimate.mainDirectionHour, mainDistribution),
+      createEstimatedAccessFlow(oppositeAccess, 'opposite', tdpaEstimate.oppositeDirectionHour, oppositeDistribution),
+    ],
+  };
+
+  estimate.accesses.forEach((access) => {
+    const movementTotal = MOVEMENT_KEYS.reduce((sum, movement) => sum + access.movements[movement], 0);
+    if (movementTotal !== access.hourlyVolume) {
+      issues.push(`La suma de movimientos de ${access.accessName} no coincide con su volumen horario.`);
+    }
+  });
+  const accessTotal = estimate.accesses.reduce((sum, access) => sum + access.hourlyVolume, 0);
+  if (accessTotal !== estimate.designHourTotal) {
+    issues.push('La suma de ambos accesos no coincide con el volumen hora de diseño.');
+  }
+
+  return {
+    valid: issues.length === 0,
+    issues,
+    estimate: issues.length === 0 ? estimate : null,
   };
 }
 

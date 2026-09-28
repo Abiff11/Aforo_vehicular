@@ -10,6 +10,7 @@ import {
   findCorridorIntersections,
   parseRoadTrafficCsv,
   validateMovementDistribution,
+  validateTdpaIntersectionEstimate,
 } from './roadTrafficImport';
 import { createRoadTrafficCorridorStudies } from './roadTrafficCorridorGeneration';
 import { calculateStudySummary } from './calculations';
@@ -237,6 +238,51 @@ describe('road traffic import', () => {
     expect(Object.values(north?.movements ?? {}).reduce((sum, value) => sum + value, 0)).toBe(970);
     expect(south?.hourlyVolume).toBe(928);
     expect(Object.values(south?.movements ?? {}).reduce((sum, value) => sum + value, 0)).toBe(928);
+  });
+
+  it('validates a stored TDPA estimate against the configured accesses without writing observed rows', () => {
+    const [record] = parseRoadTrafficCsv(sourceCsv);
+    const imported = createTrafficStudyForIntersection(record, intersections[0]);
+    const validation = validateTdpaIntersectionEstimate(
+      imported.study.tdpaEstimate,
+      imported.study.configurationSnapshot.accesses,
+      {
+        mainDirectionAccessId: 'north',
+        oppositeDirectionAccessId: 'south',
+        movementDistributionByAccess: {
+          north: { left: 10, through: 80, right: 10, uTurn: 0 },
+          south: { left: 10, through: 80, right: 10, uTurn: 0 },
+        },
+      },
+    );
+
+    expect(validation.valid).toBe(true);
+    expect(validation.issues).toEqual([]);
+    expect(validation.estimate?.designHourTotal).toBe(1898);
+    expect(validation.estimate?.accesses[0].movements).toEqual({ left: 97, through: 776, right: 97, uTurn: 0 });
+    expect(validation.estimate?.accesses[1].movements).toEqual({ left: 93, through: 742, right: 93, uTurn: 0 });
+    expect(imported.study.rows.every((row) => row.through === null)).toBe(true);
+  });
+
+  it('rejects a TDPA estimate when one selected access does not distribute exactly 100 percent', () => {
+    const [record] = parseRoadTrafficCsv(sourceCsv);
+    const imported = createTrafficStudyForIntersection(record, intersections[0]);
+    const validation = validateTdpaIntersectionEstimate(
+      imported.study.tdpaEstimate,
+      imported.study.configurationSnapshot.accesses,
+      {
+        mainDirectionAccessId: 'north',
+        oppositeDirectionAccessId: 'south',
+        movementDistributionByAccess: {
+          north: { left: 10, through: 70, right: 10, uTurn: 0 },
+          south: { left: 10, through: 80, right: 10, uTurn: 0 },
+        },
+      },
+    );
+
+    expect(validation.valid).toBe(false);
+    expect(validation.estimate).toBeNull();
+    expect(validation.issues).toContain('Norte: La distribución de movimientos debe sumar exactamente 100%.');
   });
 
   it('creates a TDPA estimate without fabricating an observed intersection count', () => {
