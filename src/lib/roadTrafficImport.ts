@@ -1,5 +1,5 @@
 import type { Intersection, Study, TdpaEstimate } from './types';
-import { createDefaultStudy } from './study';
+import { createDefaultStudy, hasCapturedData } from './study';
 
 const EARTH_RADIUS_METERS = 6_371_000;
 
@@ -223,12 +223,17 @@ export function getCorridorName(intersections: Intersection[], sourceIntersectio
 
 function applyRoadTrafficEstimate(study: Study, record: RoadTrafficRecord): Study {
   const sourceNote = `Estimación TDPA ${record.route} km ${record.kilometer}. Punto generador: ${record.point}. No sustituye un aforo de intersección en campo.`;
+  const preserveObservedSource = (study.source ?? 'observed') === 'observed' && hasCapturedData(study);
+  const status = preserveObservedSource
+    ? study.status === 'exported' ? 'validated' : study.status
+    : 'draft';
+
   return {
     ...study,
     currentStep: 6,
-    source: 'estimated_tdpa',
+    source: preserveObservedSource ? 'observed' : 'estimated_tdpa',
     tdpaEstimate: createTdpaEstimate(record),
-    status: 'draft',
+    status,
     metadata: {
       ...study.metadata,
       notes: study.metadata.notes ? `${study.metadata.notes} | ${sourceNote}` : sourceNote,
