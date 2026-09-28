@@ -108,6 +108,7 @@ describe('ResultsDashboard calculation integrity', () => {
       />,
     );
 
+    expect(screen.getByRole('region', { name: 'Resumen ejecutivo de resultados' })).toBeInTheDocument();
     expect(screen.getByText('Resultados parciales: la captura observada no está completa.')).toBeInTheDocument();
     expect(screen.getByText('Volumen registrado parcial')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Calidad de captura' })).toBeInTheDocument();
@@ -137,6 +138,7 @@ describe('ResultsDashboard calculation integrity', () => {
       />,
     );
 
+    expect(screen.getByRole('region', { name: 'Resultados observados' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Volumen por intervalo' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Volumen por acceso' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Distribución por movimiento' })).toBeInTheDocument();
@@ -201,6 +203,7 @@ describe('ResultsDashboard calculation integrity', () => {
       />,
     );
 
+    expect(screen.getByRole('region', { name: 'Estimación TDPA' })).toBeInTheDocument();
     expect(screen.getByText('ESTIMACIÓN TDPA — NO SUSTITUYE UN AFORO DE INTERSECCIÓN EN CAMPO.')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Estimación TDPA' })).toBeInTheDocument();
     expect(screen.getByText('Volumen hora de diseño estimado')).toBeInTheDocument();
