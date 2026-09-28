@@ -186,7 +186,6 @@ export function WizardApp() {
         {
           programs: activeStudy.configurationSnapshot.programs,
           assignments: activeStudy.configurationSnapshot.signalMovementAssignments ?? [],
-          observedSaturationFlowPerLane: activeStudy.metadata.observedSaturationFlowPerLane,
         },
       ),
     [activeStudy],
@@ -574,11 +573,6 @@ export function WizardApp() {
               </label>
               <label>Aforador<input value={studyTemplate.surveyor} onChange={(event) => updateSharedMetadata('surveyor', event.target.value)} /></label>
               <label>Clima<input value={studyTemplate.weather} onChange={(event) => updateSharedMetadata('weather', event.target.value)} /></label>
-              <label>
-                Flujo de saturación general de referencia (veh/h/carril)
-                <input min={0} type="number" value={studyTemplate.observedSaturationFlowPerLane ?? ''} onChange={(event) => updateSharedMetadata('observedSaturationFlowPerLane', parseOptionalNumber(event.target.value))} />
-                <small>Referencia histórica. La capacidad formal usa la saturación configurada en cada grupo movimiento–fase.</small>
-              </label>
               <label>Observaciones generales<input value={studyTemplate.notes} onChange={(event) => updateSharedMetadata('notes', event.target.value)} /></label>
             </div>
           </section>
@@ -661,13 +655,63 @@ export function WizardApp() {
                 </article>
               ))}
             </div>
+
+            <section className="panel">
+              <div className="section-heading">
+                <div>
+                  <h3>Grupos de carriles y movimientos</h3>
+                  <p className="section-description">Defina aquí la geometría funcional del grupo y su flujo de saturación. La fase y el verde efectivo se asignan en Semáforo.</p>
+                </div>
+                <button className="primary" onClick={() => setActiveStudy(addSignalMovementAssignment(activeStudy))} type="button">Agregar grupo de carriles</button>
+              </div>
+              {(activeStudy.configurationSnapshot.signalMovementAssignments ?? []).length === 0 && <p>Ningún grupo de carriles configurado.</p>}
+              <div className="access-grid">
+                {(activeStudy.configurationSnapshot.signalMovementAssignments ?? []).map((assignment) => {
+                  const selectedAccess = activeStudy.configurationSnapshot.accesses.find((access) => access.id === assignment.accessId);
+                  return (
+                    <article className="access-card" key={assignment.id}>
+                      <h4>{assignment.id}</h4>
+                      <label>
+                        Acceso
+                        <select aria-label={`Acceso grupo ${assignment.id}`} value={assignment.accessId} onChange={(event) => updateSignalGroup(assignment, { accessId: event.target.value })}>
+                          {activeStudy.configurationSnapshot.accesses.map((access) => <option key={access.id} value={access.id}>{access.name}</option>)}
+                        </select>
+                      </label>
+                      <label>
+                        Movimiento
+                        <select aria-label={`Movimiento grupo ${assignment.id}`} value={assignment.movement} onChange={(event) => updateSignalGroup(assignment, { movement: event.target.value as MovementKey })}>
+                          {(Object.keys(fullMovementLabels) as MovementKey[]).map((movement) => (
+                            <option disabled={selectedAccess ? !selectedAccess.movements[movement] : false} key={movement} value={movement}>{fullMovementLabels[movement]}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>Carriles del grupo<input aria-label={`Carriles grupo ${assignment.id}`} min={1} type="number" value={assignment.lanes ?? ''} onChange={(event) => updateSignalGroup(assignment, { lanes: parseOptionalNumber(event.target.value) })} /></label>
+                      <label>Saturación (veh/h/carril)<input aria-label={`Saturación grupo ${assignment.id}`} min={0} type="number" value={assignment.saturationFlowPerLane ?? ''} onChange={(event) => updateSignalGroup(assignment, { saturationFlowPerLane: parseOptionalNumber(event.target.value) })} /></label>
+                      <label>
+                        Origen de saturación
+                        <select
+                          aria-label={`Origen saturación grupo ${assignment.id}`}
+                          value={assignment.saturationSource}
+                          onChange={(event) => updateSignalGroup(assignment, { saturationSource: event.target.value as SignalMovementAssignment['saturationSource'] })}
+                        >
+                          <option value="unknown">No disponible / pendiente</option>
+                          <option value="measured">Medido en campo</option>
+                          <option value="estimated">Estimado</option>
+                        </select>
+                      </label>
+                      <button className="danger-secondary" onClick={() => setActiveStudy(removeSignalMovementAssignment(activeStudy, assignment.id))} type="button">Eliminar grupo</button>
+                    </article>
+                  );
+                })}
+              </div>
+            </section>
           </section>
         )}
 
         {activeStudy.currentStep === 3 && (
           <section>
             <h2>Programacion semaforica</h2>
-            <p className="section-description">El verde programado describe el controlador. El verde efectivo para capacidad se captura por grupo movimiento–fase.</p>
+            <p className="section-description">El verde programado describe el controlador. Aquí se vinculan los grupos definidos en Configuración con programa, fase y verde efectivo.</p>
             {activeStudy.configurationSnapshot.programs.map((program) => (
               <article className="panel" key={program.id}>
                 <div className="form-grid">
@@ -699,12 +743,11 @@ export function WizardApp() {
             <section className="panel">
               <div className="section-heading">
                 <div>
-                  <h3>Grupos movimiento–fase</h3>
-                  <p className="section-description">Configure únicamente grupos con correspondencia real entre acceso, movimiento y fase. Sin todos los insumos, capacidad y v/c quedan N/D.</p>
+                  <h3>Asignación semafórica de grupos</h3>
+                  <p className="section-description">Los carriles y la saturación se definen en Configuración; aquí sólo se asignan programa, fase y verde efectivo.</p>
                 </div>
-                <button className="primary" onClick={() => setActiveStudy(addSignalMovementAssignment(activeStudy))} type="button">Agregar grupo semafórico</button>
               </div>
-              {(activeStudy.configurationSnapshot.signalMovementAssignments ?? []).length === 0 && <p>Ningún grupo configurado.</p>}
+              {(activeStudy.configurationSnapshot.signalMovementAssignments ?? []).length === 0 && <p>Configure primero al menos un grupo de carriles en el paso Configuración.</p>}
               <div className="access-grid">
                 {(activeStudy.configurationSnapshot.signalMovementAssignments ?? []).map((assignment) => {
                   const selectedAccess = activeStudy.configurationSnapshot.accesses.find((access) => access.id === assignment.accessId);
@@ -712,20 +755,7 @@ export function WizardApp() {
                   return (
                     <article className="access-card" key={assignment.id}>
                       <h4>{assignment.id}</h4>
-                      <label>
-                        Acceso
-                        <select aria-label={`Acceso grupo ${assignment.id}`} value={assignment.accessId} onChange={(event) => updateSignalGroup(assignment, { accessId: event.target.value })}>
-                          {activeStudy.configurationSnapshot.accesses.map((access) => <option key={access.id} value={access.id}>{access.name}</option>)}
-                        </select>
-                      </label>
-                      <label>
-                        Movimiento
-                        <select aria-label={`Movimiento grupo ${assignment.id}`} value={assignment.movement} onChange={(event) => updateSignalGroup(assignment, { movement: event.target.value as MovementKey })}>
-                          {(Object.keys(fullMovementLabels) as MovementKey[]).map((movement) => (
-                            <option disabled={selectedAccess ? !selectedAccess.movements[movement] : false} key={movement} value={movement}>{fullMovementLabels[movement]}</option>
-                          ))}
-                        </select>
-                      </label>
+                      <p><strong>{selectedAccess?.name ?? assignment.accessId}</strong> · {fullMovementLabels[assignment.movement]}</p>
                       <label>
                         Programa
                         <select
@@ -743,13 +773,11 @@ export function WizardApp() {
                       <label>
                         Fase
                         <select aria-label={`Fase grupo ${assignment.id}`} value={assignment.phaseId} onChange={(event) => updateSignalGroup(assignment, { phaseId: event.target.value })}>
+                          <option value="">Sin fase asignada</option>
                           {(selectedProgram?.phaseTimings ?? []).map((phase) => <option key={phase.id} value={phase.id}>{phase.name}</option>)}
                         </select>
                       </label>
-                      <label>Carriles del grupo<input aria-label={`Carriles grupo ${assignment.id}`} min={1} type="number" value={assignment.lanes ?? ''} onChange={(event) => updateSignalGroup(assignment, { lanes: parseOptionalNumber(event.target.value) })} /></label>
-                      <label>Saturación (veh/h/carril)<input aria-label={`Saturación grupo ${assignment.id}`} min={0} type="number" value={assignment.saturationFlowPerLane ?? ''} onChange={(event) => updateSignalGroup(assignment, { saturationFlowPerLane: parseOptionalNumber(event.target.value) })} /></label>
                       <label>Verde efectivo (s)<input aria-label={`Verde efectivo grupo ${assignment.id}`} min={0} type="number" value={assignment.effectiveGreenSeconds ?? ''} onChange={(event) => updateSignalGroup(assignment, { effectiveGreenSeconds: parseOptionalNumber(event.target.value) })} /></label>
-                      <button className="danger-secondary" onClick={() => setActiveStudy(removeSignalMovementAssignment(activeStudy, assignment.id))} type="button">Eliminar grupo</button>
                     </article>
                   );
                 })}
