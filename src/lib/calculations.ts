@@ -338,6 +338,9 @@ export function calculateStudySummary(
 
   const totalMotorized = rows.reduce((total, row) => total + totalForRow(row), 0);
   const validIntervals = byInterval.filter((item) => item.complete);
+  const validIntervalIds = new Set(validIntervals.map((item) => item.intervalId));
+  const chartRows = rows.filter((row) => validIntervalIds.has(row.intervalId));
+  const chartMotorizedTotal = chartRows.reduce((total, row) => total + totalForRow(row), 0);
   const peakInterval = validIntervals.reduce<{ label: string; volume: number } | null>((best, item) => {
     if (!best || item.total > best.volume) return { label: item.label, volume: item.total };
     return best;
@@ -381,12 +384,12 @@ export function calculateStudySummary(
   const byAccess = accesses.map((access) => ({
     accessId: access.id,
     accessName: access.name,
-    volume: rows.filter((row) => row.accessId === access.id).reduce((total, row) => total + totalForRow(row), 0),
+    volume: chartRows.filter((row) => row.accessId === access.id).reduce((total, row) => total + totalForRow(row), 0),
   }));
 
   const byMovement = movementKeys.map((key) => {
-    const volume = rows.reduce((total, row) => total + movementValueForRow(row, key), 0);
-    return { movement: movementLabels[key], volume, percent: totalMotorized > 0 ? (volume / totalMotorized) * 100 : 0 };
+    const volume = chartRows.reduce((total, row) => total + movementValueForRow(row, key), 0);
+    return { movement: movementLabels[key], volume, percent: chartMotorizedTotal > 0 ? (volume / chartMotorizedTotal) * 100 : 0 };
   });
 
   const queueByAccess = accesses.map((access) => {
@@ -513,7 +516,7 @@ export function calculateStudySummary(
     totalPedestrians: rows.reduce((total, row) => total + valueOrZero(row.pedestrians), 0),
     peakInterval,
     peakHour,
-    averageIntervalVolume: byInterval.length > 0 ? totalMotorized / byInterval.length : 0,
+    averageIntervalVolume: validIntervals.length > 0 ? chartMotorizedTotal / validIntervals.length : 0,
     byInterval,
     byAccess,
     byMovement,

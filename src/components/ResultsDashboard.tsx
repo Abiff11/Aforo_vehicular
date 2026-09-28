@@ -96,9 +96,12 @@ export function ResultsDashboard({
     );
   }
 
-  const intervalChartData = summary.byInterval.map((interval) => ({ label: interval.label, volumen: interval.total }));
+  const intervalChartData = summary.byInterval
+    .filter((interval) => interval.complete)
+    .map((interval) => ({ label: interval.label, volumen: interval.total }));
   const accessChartData = summary.byAccess.map((access) => ({ label: access.accessName, volumen: access.volume }));
   const movementChartData = summary.byMovement.map((movement) => ({ label: movement.movement, volumen: movement.volume }));
+  const hasCompleteIntervals = intervalChartData.length > 0;
   const cycleSummaries = summary.cycleSummaries ?? [];
   const signalGroups = summary.signalGroupIndicators ?? [];
 
@@ -122,7 +125,7 @@ export function ResultsDashboard({
         <article className="kpi"><span>Intervalo máximo válido</span><strong>{summary.peakInterval ? `${summary.peakInterval.label} · ${numberFormat.format(summary.peakInterval.volume)}` : 'N/D'}</strong></article>
         <article className="kpi"><span>Hora de máxima demanda</span><strong>{summary.peakHour ? `${summary.peakHour.label} · ${numberFormat.format(summary.peakHour.volume)}` : 'N/D'}</strong></article>
         <article className="kpi"><span><abbr title="Factor de Hora Pico">{summary.peakHour?.factorLabel ?? 'FHP'}</abbr></span><strong>{summary.peakHour?.factor === null || summary.peakHour?.factor === undefined ? 'N/D' : summary.peakHour.factor.toFixed(3)}</strong></article>
-        <article className="kpi"><span>Promedio {intervalMinutes} min capturado</span><strong>{formatNullable(summary.averageIntervalVolume, 1)}</strong></article>
+        <article className="kpi"><span>Promedio {intervalMinutes} min válido</span><strong>{hasCompleteIntervals ? formatNullable(summary.averageIntervalVolume, 1) : 'N/D'}</strong></article>
         <article className="kpi"><span>Pesados capturados</span><strong>{numberFormat.format(summary.totalHeavy)}</strong></article>
         <article className="kpi"><span>Motos capturadas</span><strong>{numberFormat.format(summary.totalMotorcycles)}</strong></article>
         <article className="kpi"><span>Bicicletas capturadas</span><strong>{numberFormat.format(summary.totalBicycles)}</strong></article>
@@ -139,11 +142,18 @@ export function ResultsDashboard({
         </div>
       </section>
 
-      <div className="dashboard-charts">
-        <DashboardChart title="Volumen por intervalo" data={intervalChartData} dataKey="volumen" labelKey="label" />
-        <DashboardChart title="Volumen por acceso" data={accessChartData} dataKey="volumen" labelKey="label" />
-        <DashboardChart title="Distribución por movimiento" data={movementChartData} dataKey="volumen" labelKey="label" />
-      </div>
+      {hasCompleteIntervals ? (
+        <div className="dashboard-charts">
+          <DashboardChart title="Volumen por intervalo" data={intervalChartData} dataKey="volumen" labelKey="label" />
+          <DashboardChart title="Volumen por acceso" data={accessChartData} dataKey="volumen" labelKey="label" />
+          <DashboardChart title="Distribución por movimiento" data={movementChartData} dataKey="volumen" labelKey="label" />
+        </div>
+      ) : (
+        <section className="panel">
+          <h3>Resultados observados no disponibles</h3>
+          <p>N/D — complete al menos un intervalo entero para habilitar las gráficas observadas.</p>
+        </section>
+      )}
 
       <section className="dashboard-table panel">
         <h3>Aforo consolidado por intervalo</h3>

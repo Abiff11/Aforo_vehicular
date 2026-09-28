@@ -96,7 +96,7 @@ function formalRow(interval: IntervalBlock, through: number): CaptureRow {
 }
 
 describe('ResultsDashboard calculation integrity', () => {
-  it('labels incomplete observed data as partial and exposes capture quality', () => {
+  it('labels incomplete observed data as partial and withholds definitive charts', () => {
     const { study, summary } = summaryForStudy();
     render(
       <ResultsDashboard
@@ -112,9 +112,36 @@ describe('ResultsDashboard calculation integrity', () => {
     expect(screen.getByText('Volumen registrado parcial')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Calidad de captura' })).toBeInTheDocument();
     expect(screen.getByText(/0\/32 filas completas/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Resultados observados no disponibles' })).toBeInTheDocument();
+    expect(screen.getByText('N/D — complete al menos un intervalo entero para habilitar las gráficas observadas.')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Volumen por intervalo' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Ciclos observados' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Indicadores semafóricos por grupo' })).toBeInTheDocument();
     expect(screen.getByText('N/D — configure grupos movimiento–fase para calcular capacidad y v/c.')).toBeInTheDocument();
+  });
+
+  it('shows charts when at least one complete observed interval exists', () => {
+    const partialRows = [
+      formalRow(formalIntervals[0], 100),
+      { ...formalRow(formalIntervals[1], 200), left: null },
+    ];
+    const summary = calculateStudySummary(partialRows, [formalAccess], 15);
+
+    render(
+      <ResultsDashboard
+        summary={summary}
+        intervalMinutes={15}
+        source="observed"
+        tdpaEstimate={null}
+        legacyUnverified={false}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Volumen por intervalo' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Volumen por acceso' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Distribución por movimiento' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Resultados observados no disponibles' })).not.toBeInTheDocument();
+    expect(screen.getByText('Promedio 15 min válido')).toBeInTheDocument();
   });
 
   it('renders formal lane-group indicators exactly from the shared calculation summary', () => {
@@ -182,7 +209,7 @@ describe('ResultsDashboard calculation integrity', () => {
     expect(screen.queryByRole('heading', { name: 'Aforo consolidado por intervalo' })).not.toBeInTheDocument();
   });
 
-  it('shows TDPA as an independent panel without hiding an existing observed dashboard', () => {
+  it('shows TDPA as an independent panel without promoting partial observed capture to charts', () => {
     const [record] = parseRoadTrafficCsv(roadTrafficCsv);
     const base = createDefaultStudy('INT-001');
     const observed = {
@@ -211,7 +238,8 @@ describe('ResultsDashboard calculation integrity', () => {
     );
 
     expect(study.source).toBe('observed');
-    expect(screen.getByRole('heading', { name: 'Volumen por intervalo' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Resultados observados no disponibles' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Volumen por intervalo' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Estimación TDPA' })).toBeInTheDocument();
     expect(screen.getByText('ESTIMACIÓN TDPA — NO SUSTITUYE UN AFORO DE INTERSECCIÓN EN CAMPO.')).toBeInTheDocument();
   });

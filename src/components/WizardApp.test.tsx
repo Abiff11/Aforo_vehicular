@@ -235,14 +235,15 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(screen.queryByRole('heading', { name: 'Volumen por intervalo' })).not.toBeInTheDocument();
   });
 
-  it('shows Excel-aligned observed dashboard sections without aggregate capacity', () => {
+  it('withholds definitive observed charts while the capture is incomplete', () => {
     renderWithIntersection();
     fireEvent.click(screen.getByRole('button', { name: /^7\s*Resultados$/ }));
     expect(screen.getByText('Volumen registrado parcial')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Calidad de captura' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Volumen por intervalo' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Volumen por acceso' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Distribución por movimiento' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Resultados observados no disponibles' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Volumen por intervalo' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Volumen por acceso' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Distribución por movimiento' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Aforo consolidado por intervalo' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Colas y operación' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Ciclos observados' })).toBeInTheDocument();
