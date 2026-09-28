@@ -195,6 +195,13 @@ export function WizardApp() {
     [activeStudy],
   );
 
+  const captureRowsToReview = (summary.rowValidation ?? [])
+    .filter((result) => result.state !== 'complete')
+    .map((result) => ({
+      ...result,
+      row: activeStudy.rows.find((row) => row.id === result.rowId),
+    }));
+
   const relatedIntersectionIds = selectedIntersection?.relatedIntersectionIds ?? activeStudy.relatedIntersectionIds ?? [];
   const linkedIntersectionOptions = useMemo(
     () => customIntersections
@@ -553,7 +560,7 @@ export function WizardApp() {
           <section aria-labelledby="help-title" className="help-modal" role="dialog" onClick={(event) => event.stopPropagation()}>
             <div className="help-header">
               <div><p className="eyebrow">Tutorial del paso</p><h2 id="help-title">{activeHelp.helpTitle}</h2></div>
-              <button aria-label="Cerrar ayuda" className="icon-button" onClick={() => setHelpStepIndex(null)} type="button"><X size={20} /></button>
+              <button aria-label="Cerrar ayuda" className="icon-button" onClick={() => setHelpStepIndex(null)} title="Cerrar ayuda" type="button"><X size={20} /></button>
             </div>
             <p>{activeHelp.helpBody}</p>
             <ol className="help-list">{activeHelp.helpChecklist.map((item) => <li key={item}>{item}</li>)}</ol>
@@ -833,6 +840,19 @@ export function WizardApp() {
           <section>
             <h2>Tabla unica de aforo</h2>
             <p className="section-description">El programa observado es una nota operacional opcional y no sustituye el programa semafórico configurado.</p>
+            <div className="panel" role="status" aria-label="Estado de captura">
+              <div className="section-heading">
+                <div>
+                  <h3>Estado de captura</h3>
+                  <p>{summary.completeRows}/{activeStudy.rows.length} filas completas ({summary.completionPercent.toFixed(1)}%)</p>
+                </div>
+              </div>
+              {summary.isComplete ? (
+                <p className="result"><CheckCircle2 size={18} /> Captura obligatoria completa.</p>
+              ) : (
+                <p className="warning"><AlertTriangle size={16} /> {summary.incompleteRows} filas incompletas · {summary.errorRows} filas con error.</p>
+              )}
+            </div>
             {(activeStudy.source ?? 'observed') === 'estimated_tdpa' && <p className="warning">Esta intersección tiene una estimación TDPA asociada. La tabla permanece vacía hasta que se realice captura de campo.</p>}
             <div className="table-wrap capture">
               <table>
@@ -883,14 +903,49 @@ export function WizardApp() {
             </div>
             {(activeStudy.source ?? 'observed') === 'estimated_tdpa' && <p className="warning">Una estimación TDPA no puede validarse como aforo observado.</p>}
             {activeStudy.legacyUnverified && <p className="warning">Estudio legado pendiente de revisar. Confirme los ceros históricos antes de validarlo.</p>}
-            {summary.issues.length === 0 ? (
-              <p className="result"><CheckCircle2 size={18} /> Sin errores obligatorios detectados.</p>
+
+            {captureRowsToReview.length === 0 ? (
+              <p className="result"><CheckCircle2 size={18} /> Captura completa: {summary.completeRows}/{activeStudy.rows.length} filas.</p>
             ) : (
               <div className="panel">
-                <p className="warning"><AlertTriangle size={16} /> Se detectaron {summary.issues.length} observaciones.</p>
-                <ul>{summary.issues.slice(0, 30).map((issue, index) => <li key={`${issue}-${index}`}>{issue}</li>)}</ul>
+                <div className="section-heading">
+                  <div>
+                    <h3>Captura por revisar</h3>
+                    <p className="warning"><AlertTriangle size={16} /> {summary.incompleteRows} filas incompletas · {summary.errorRows} filas con error.</p>
+                  </div>
+                  <button className="primary" onClick={() => goToStep(4)} type="button">Ir a Aforo</button>
+                </div>
+                <ul>
+                  {captureRowsToReview.slice(0, 20).map((result) => (
+                    <li key={result.rowId}>
+                      <strong>{result.row ? `${result.row.intervalLabel} · ${result.row.accessName}` : result.rowId}</strong>
+                      {' — '}{result.state === 'error' ? 'Error: ' : 'Incompleta: '}{result.issues.join(' ')}
+                    </li>
+                  ))}
+                </ul>
+                {captureRowsToReview.length > 20 && <p>Se muestran 20 de {captureRowsToReview.length} filas por revisar.</p>}
               </div>
             )}
+
+            {(summary.signalValidationIssues?.length ?? 0) > 0 ? (
+              <div className="panel">
+                <div className="section-heading">
+                  <div>
+                    <h3>Configuración semafórica por revisar</h3>
+                    <p className="warning"><AlertTriangle size={16} /> Estas observaciones son independientes de la captura de campo.</p>
+                  </div>
+                  <button className="primary" onClick={() => goToStep(3)} type="button">Ir a Semáforo</button>
+                </div>
+                <ul>
+                  {summary.signalValidationIssues?.map((issue, index) => (
+                    <li key={`${issue.code}-${issue.programId ?? issue.assignmentId ?? 'general'}-${index}`}>{issue.message}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="result"><CheckCircle2 size={18} /> Sin observaciones de configuración semafórica.</p>
+            )}
+
             <div className="summary-grid">{summary.dataQuality.map((item) => <div className="kpi" key={item}>{item}</div>)}</div>
           </section>
         )}

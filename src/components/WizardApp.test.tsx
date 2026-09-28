@@ -183,10 +183,39 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(screen.getAllByLabelText(/Programa observado opcional ·/).length).toBeGreaterThan(0);
   });
 
+  it('shows capture progress and navigates from validation to Aforo', () => {
+    renderWithIntersection();
+    fireEvent.click(screen.getByRole('button', { name: /^5\s*Aforo$/ }));
+
+    const captureStatus = screen.getByRole('status', { name: 'Estado de captura' });
+    expect(within(captureStatus).getByText(/0\/\d+ filas completas/)).toBeInTheDocument();
+    expect(within(captureStatus).getByText(/filas incompletas/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^6\s*Validar$/ }));
+    expect(screen.getByRole('heading', { name: 'Captura por revisar' })).toBeInTheDocument();
+    expect(screen.getByText(/07:00-07:15 · Norte/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Ir a Aforo' }));
+    expect(screen.getByRole('heading', { name: 'Tabla unica de aforo' })).toBeInTheDocument();
+  });
+
+  it('keeps signal warnings separate and navigates back to Semaforo', () => {
+    renderWithIntersection();
+    fireEvent.click(screen.getByRole('button', { name: /^4\s*Semaforo$/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Agregar programa' }));
+    fireEvent.change(screen.getByLabelText('Hora inicio programa P2'), { target: { value: '08:30' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /^6\s*Validar$/ }));
+    expect(screen.getByRole('heading', { name: 'Configuración semafórica por revisar' })).toBeInTheDocument();
+    expect(screen.getByText('Los programas P1 y P2 se traslapan.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Captura por revisar' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Ir a Semáforo' }));
+    expect(screen.getByRole('heading', { name: 'Programacion semaforica' })).toBeInTheDocument();
+  });
+
   it('shows incomplete validation state until observed capture is complete', () => {
     renderWithIntersection();
     fireEvent.click(screen.getByRole('button', { name: /^6\s*Validar$/ }));
-    expect(screen.getByText(/filas incompletas/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Captura por revisar' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Validar estudio' }));
     expect(screen.getByText('Estado del estudio: Incompleto')).toBeInTheDocument();
   });
