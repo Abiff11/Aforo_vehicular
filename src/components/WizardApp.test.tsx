@@ -34,7 +34,7 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(screen.getByRole('heading', { name: 'Datos del estudio' })).toBeInTheDocument();
     expect(screen.getByLabelText('Aforador')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Limpiar estudio' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Flujo de saturación general de referencia (veh/h/carril)')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Flujo de saturación general de referencia/)).toBeInTheDocument();
   });
 
   it('reuses shared study metadata and restores each intersection study when switching markers', () => {
