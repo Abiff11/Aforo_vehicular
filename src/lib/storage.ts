@@ -11,7 +11,7 @@ function defaultStudiesByIntersection(activeStudy: Study | null): Record<string,
   return { [activeStudy.intersectionId]: activeStudy };
 }
 
-function mergeCatalogIntersections(savedIntersections: Intersection[] | undefined): Intersection[] {
+function mergeCatalogIntersections(savedIntersections?: Intersection[]): Intersection[] {
   const savedById = new Map((savedIntersections ?? []).map((intersection) => [intersection.id, intersection]));
   const catalogIds = new Set(intersections.map((intersection) => intersection.id));
   const catalog = intersections.map((intersection) => ({ ...intersection, ...savedById.get(intersection.id) }));
