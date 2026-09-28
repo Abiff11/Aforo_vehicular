@@ -101,6 +101,62 @@ describe('exportStudyWorkbook calculation integrity', () => {
     expect(detailed[0]).toMatchObject({ Izquierda: 'N/D', Frente: 'N/D', Derecha: 'N/D', Pesados: 'N/D' });
   });
 
+  it('labels dashboard values by origin and preserves every study status explicitly', () => {
+    const incomplete = createDefaultStudy('INT-001');
+    const legacy = { ...incomplete, legacyUnverified: true };
+    const validated = createFormalStudy();
+    const exported: Study = { ...validated, status: 'exported' };
+
+    const getDashboardMap = (study: Study) => {
+      const workbook = exportStudyWorkbook(study, intersections[0]);
+      const rows = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets['02_DASHBOARD']);
+      return new Map(rows.map((row) => [row.Indicador, row]));
+    };
+
+    const incompleteMap = getDashboardMap(incomplete);
+    const legacyMap = getDashboardMap(legacy);
+    const validatedMap = getDashboardMap(validated);
+    const exportedMap = getDashboardMap(exported);
+
+    expect(incompleteMap.get('Estado')).toMatchObject({ Valor: 'Incompleto', Origen: 'Estado del estudio' });
+    expect(incompleteMap.get('Volumen registrado parcial')).toMatchObject({ Origen: 'Capturado' });
+    expect(incompleteMap.get('Hora pico observada')).toMatchObject({ Origen: 'Calculado' });
+    expect(legacyMap.get('Estado')?.Valor).toBe('Legado pendiente de verificar');
+    expect(validatedMap.get('Estado')?.Valor).toBe('Validado');
+    expect(exportedMap.get('Estado')?.Valor).toBe('Exportado validado');
+  });
+
+  it('preserves observed zero separately from unknown values after workbook serialization', () => {
+    const base = createDefaultStudy('INT-001');
+    const firstRow = base.rows[0];
+    const study: Study = {
+      ...base,
+      rows: base.rows.map((row) => row.id === firstRow.id
+        ? {
+            ...row,
+            left: 0,
+            through: 0,
+            right: 0,
+            uTurn: null,
+            heavy: 0,
+            motorcycles: 0,
+            bicycles: 0,
+            pedestrians: 0,
+          }
+        : row),
+    };
+
+    const workbook = exportStudyWorkbook(study, intersections[0]);
+    const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
+    const parsed = XLSX.read(buffer, { type: 'buffer' });
+    const detailed = XLSX.utils.sheet_to_json<Record<string, string | number>>(parsed.Sheets['03_AFORO_DETALLADO']);
+    const completeRow = detailed.find((row) => row.EstadoDato === 'Completo');
+    const incompleteRow = detailed.find((row) => row.EstadoDato === 'Incompleto');
+
+    expect(completeRow).toMatchObject({ Frente: 0, Total: 0, OrigenDato: 'Captura de campo', TipoTotal: 'Calculado' });
+    expect(incompleteRow).toMatchObject({ Frente: 'N/D', Total: 'N/D', OrigenDato: 'Captura incompleta', TipoTotal: 'N/D' });
+  });
+
   it('exports formal lane-group capacity and observed cycle statistics directly from the shared calculation engine', () => {
     const study = createFormalStudy();
     const summary = calculateStudySummary(
@@ -153,6 +209,7 @@ describe('exportStudyWorkbook calculation integrity', () => {
     const dashboard = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets['02_DASHBOARD']);
     const ficha = XLSX.utils.sheet_to_json<Array<string | number>>(workbook.Sheets['01_FICHA_TECNICA'], { header: 1, defval: '' });
     const indicatorMap = new Map(dashboard.map((row) => [row.Indicador, row.Valor]));
+    const originMap = new Map(dashboard.map((row) => [row.Indicador, row.Origen]));
     const observedSummary = ficha.find((row) =>
       row[0] === 'Volumen registrado parcial:' || row[0] === 'Volumen total observado:' || row[0] === 'Volumen observado:',
     );
@@ -167,6 +224,7 @@ describe('exportStudyWorkbook calculation integrity', () => {
     expect(indicatorMap.get("K'")).toBe(0.076);
     expect(indicatorMap.get('D')).toBe(0.511);
     expect(indicatorMap.get('Volumen hora de diseño estimado')).toBe(1898);
+    expect(originMap.get('Volumen hora de diseño estimado')).toBe('Estimado');
     expect(indicatorMap.get('Volumen total observado')).toBe('N/D');
     expect(indicatorMap.get('FHP observado')).toBe('N/D');
   });
