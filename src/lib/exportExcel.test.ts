@@ -19,6 +19,10 @@ const roadTrafficCsv = `CARRETERA,"CLAVE CARRETERA",RUTA,"PUNTO GENERADOR",KM,TI
 "Huajuapan de León - Oaxaca",20056,MEX-190,"T. Aut. Cuacnopalan - Oaxaca",181.8,3,1,24977,10.6,80.5,2,3.1,1.2,0.9,0.5,0.8,0.4,91.1,2,6.9,0.511,0.076,17.139925,-96.776604
 `;
 
+function tableRows<T>(sheet: XLSX.WorkSheet): T[] {
+  return XLSX.utils.sheet_to_json<T>(sheet, { range: 3 });
+}
+
 function fillCompleteRows(study: Study): Study {
   const peakThrough = new Map(study.intervals.slice(0, 4).map((item, index) => [item.id, [100, 120, 140, 160][index]]));
   return {
@@ -94,7 +98,7 @@ describe('exportStudyWorkbook calculation integrity', () => {
     const study = createDefaultStudy('INT-001');
     const workbook = exportStudyWorkbook(study, intersections[0]);
     const ficha = XLSX.utils.sheet_to_json<Array<string | number>>(workbook.Sheets['01_FICHA_TECNICA'], { header: 1, defval: '' });
-    const detailed = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets['03_AFORO_DETALLADO']);
+    const detailed = tableRows<Record<string, string | number>>(workbook.Sheets['03_AFORO_DETALLADO']);
 
     expect(ficha.some((row) => row.includes('ESTUDIO INCOMPLETO — RESULTADOS PARCIALES — NO UTILIZAR COMO RESULTADO DEFINITIVO'))).toBe(true);
     expect(ficha.some((row) => row.includes('Fuente:') && row.includes('Aforo observado'))).toBe(true);
@@ -109,7 +113,7 @@ describe('exportStudyWorkbook calculation integrity', () => {
 
     const getDashboardMap = (study: Study) => {
       const workbook = exportStudyWorkbook(study, intersections[0]);
-      const rows = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets['02_DASHBOARD']);
+      const rows = tableRows<Record<string, string | number>>(workbook.Sheets['02_DASHBOARD']);
       return new Map(rows.map((row) => [row.Indicador, row]));
     };
 
@@ -149,7 +153,7 @@ describe('exportStudyWorkbook calculation integrity', () => {
     const workbook = exportStudyWorkbook(study, intersections[0]);
     const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
     const parsed = XLSX.read(buffer, { type: 'buffer' });
-    const detailed = XLSX.utils.sheet_to_json<Record<string, string | number>>(parsed.Sheets['03_AFORO_DETALLADO']);
+    const detailed = tableRows<Record<string, string | number>>(parsed.Sheets['03_AFORO_DETALLADO']);
     const completeRow = detailed.find((row) => row.EstadoDato === 'Completo');
     const incompleteRow = detailed.find((row) => row.EstadoDato === 'Incompleto');
 
@@ -171,7 +175,7 @@ describe('exportStudyWorkbook calculation integrity', () => {
     const expectedGroup = summary.signalGroupIndicators?.[0];
     const expectedCycle = summary.cycleSummaries?.find((item) => item.accessId === 'north');
     const workbook = exportStudyWorkbook(study, intersections[0]);
-    const indicators = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets['06_INDICADORES']);
+    const indicators = tableRows<Record<string, string | number>>(workbook.Sheets['06_INDICADORES']);
     const group = indicators.find((row) => row.Tipo === 'Grupo semafórico');
     const cycle = indicators.find((row) => row.Tipo === 'Ciclo observado' && row.Acceso === 'Norte');
 
@@ -206,7 +210,7 @@ describe('exportStudyWorkbook calculation integrity', () => {
     const [record] = parseRoadTrafficCsv(roadTrafficCsv);
     const { study } = createTrafficStudyForIntersection(record, intersections[0]);
     const workbook = exportStudyWorkbook(study, intersections[0]);
-    const dashboard = XLSX.utils.sheet_to_json<Record<string, string | number>>(workbook.Sheets['02_DASHBOARD']);
+    const dashboard = tableRows<Record<string, string | number>>(workbook.Sheets['02_DASHBOARD']);
     const ficha = XLSX.utils.sheet_to_json<Array<string | number>>(workbook.Sheets['01_FICHA_TECNICA'], { header: 1, defval: '' });
     const indicatorMap = new Map(dashboard.map((row) => [row.Indicador, row.Valor]));
     const originMap = new Map(dashboard.map((row) => [row.Indicador, row.Origen]));
@@ -229,19 +233,47 @@ describe('exportStudyWorkbook calculation integrity', () => {
     expect(indicatorMap.get('FHP observado')).toBe('N/D');
   });
 
-  it('adds deliberate executive presentation metadata to the workbook', () => {
+  it('adds deliberate executive presentation metadata to all report sheets', () => {
     const workbook = exportStudyWorkbook(createFormalStudy(), intersections[0]);
     const ficha = workbook.Sheets['01_FICHA_TECNICA'];
     const dashboard = workbook.Sheets['02_DASHBOARD'];
     const detailed = workbook.Sheets['03_AFORO_DETALLADO'];
+    const programming = workbook.Sheets['04_PROGRAMACION'];
+    const queues = workbook.Sheets['05_COLAS_OPERACION'];
+    const indicators = workbook.Sheets['06_INDICADORES'];
+    const guide = workbook.Sheets['07_INSTRUCTIVO'];
 
     expect(ficha['A1']?.v).toBe('FICHA TÉCNICA DE AFORO – INTERSECCIÓN SEMAFORIZADA');
     expect(ficha['!rows']?.[0]?.hpt).toBeGreaterThanOrEqual(24);
     expect(ficha['!margins']).toBeDefined();
+
     expect(dashboard['A1']?.v).toBe('RESUMEN EJECUTIVO DEL ESTUDIO');
     expect(dashboard['!merges']).toContainEqual({ s: { r: 0, c: 0 }, e: { r: 0, c: 2 } });
     expect(dashboard['!cols']?.[0]?.wch).toBeGreaterThanOrEqual(30);
+    expect(dashboard['!autofilter']?.ref).toMatch(/^A4:/);
+
     expect(detailed['A1']?.v).toBe('AFORO DETALLADO');
     expect(detailed['!autofilter']?.ref).toMatch(/^A4:/);
+    expect(programming['A1']?.v).toBe('PROGRAMACIÓN SEMAFÓRICA');
+    expect(queues['A1']?.v).toBe('COLAS Y OPERACIÓN');
+    expect(indicators['A1']?.v).toBe('INDICADORES SEMAFÓRICOS');
+    expect(guide['A1']?.v).toBe('INSTRUCTIVO TÉCNICO');
+
+    const dashboardRows = XLSX.utils.sheet_to_json<Array<string | number>>(dashboard, { header: 1, defval: '' });
+    const completionRow = dashboardRows.findIndex((row) => row[0] === 'Completitud (%)');
+    expect(completionRow).toBeGreaterThan(3);
+    expect(dashboard[XLSX.utils.encode_cell({ r: completionRow, c: 1 })]?.z).toBe('0.0');
+  });
+
+  it('preserves executive titles and data semantics after XLSX round trip', () => {
+    const workbook = exportStudyWorkbook(createFormalStudy(), intersections[0]);
+    const buffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
+    const parsed = XLSX.read(buffer, { type: 'buffer' });
+    const dashboard = parsed.Sheets['02_DASHBOARD'];
+    const detailed = tableRows<Record<string, string | number>>(parsed.Sheets['03_AFORO_DETALLADO']);
+
+    expect(dashboard['A1']?.v).toBe('RESUMEN EJECUTIVO DEL ESTUDIO');
+    expect(detailed.some((row) => row.OrigenDato === 'Captura de campo' && row.TipoTotal === 'Calculado')).toBe(true);
+    expect(detailed.some((row) => row.Frente === 0)).toBe(true);
   });
 });
