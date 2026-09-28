@@ -26,7 +26,7 @@ describe('WizardApp ficha aforo capture flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
   }
 
-  it('starts with study metadata before the intersection step', () => {
+  it('starts with only general study metadata before the intersection step', () => {
     render(<WizardApp />);
 
     expect(screen.getByRole('button', { name: /^1\s*Estudio$/ })).toBeInTheDocument();
@@ -34,7 +34,7 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(screen.getByRole('heading', { name: 'Datos del estudio' })).toBeInTheDocument();
     expect(screen.getByLabelText('Aforador')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Limpiar estudio' })).toBeInTheDocument();
-    expect(screen.getByLabelText(/Flujo de saturación general de referencia/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Flujo de saturación general/)).not.toBeInTheDocument();
   });
 
   it('reuses shared study metadata and restores each intersection study when switching markers', () => {
@@ -112,23 +112,32 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(endTime).toHaveValue('09:00');
   });
 
-  it('configures explicit movement-phase groups with effective green and saturation', () => {
+  it('configures physical lane-group saturation in Configuracion and signal timing in Semaforo', () => {
     renderWithIntersection();
-    fireEvent.click(screen.getByRole('button', { name: /^4\s*Semaforo$/ }));
-    fireEvent.change(screen.getByLabelText('Fases'), { target: { value: '1' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Agregar grupo semafórico' }));
+    fireEvent.click(screen.getByRole('button', { name: /^3\s*Configuracion$/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Agregar grupo de carriles' }));
 
-    expect(screen.getByRole('heading', { name: 'Grupos movimiento–fase' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Grupos de carriles y movimientos' })).toBeInTheDocument();
     expect(screen.getByLabelText('Acceso grupo signal-group-1')).toHaveValue('north');
     expect(screen.getByLabelText('Movimiento grupo signal-group-1')).toHaveValue('through');
-    expect(screen.getByLabelText('Programa grupo signal-group-1')).toHaveValue('p1');
-    expect(screen.getByLabelText('Fase grupo signal-group-1')).toHaveValue('phase-1');
     fireEvent.change(screen.getByLabelText('Carriles grupo signal-group-1'), { target: { value: '2' } });
     fireEvent.change(screen.getByLabelText('Saturación grupo signal-group-1'), { target: { value: '1800' } });
-    fireEvent.change(screen.getByLabelText('Verde efectivo grupo signal-group-1'), { target: { value: '40' } });
+    fireEvent.change(screen.getByLabelText('Origen saturación grupo signal-group-1'), { target: { value: 'measured' } });
     expect(screen.getByLabelText('Carriles grupo signal-group-1')).toHaveValue(2);
     expect(screen.getByLabelText('Saturación grupo signal-group-1')).toHaveValue(1800);
+    expect(screen.getByLabelText('Origen saturación grupo signal-group-1')).toHaveValue('measured');
+    expect(screen.queryByLabelText('Verde efectivo grupo signal-group-1')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^4\s*Semaforo$/ }));
+    fireEvent.change(screen.getByLabelText('Fases'), { target: { value: '1' } });
+    expect(screen.getByRole('heading', { name: 'Asignación semafórica de grupos' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Programa grupo signal-group-1')).toHaveValue('p1');
+    fireEvent.change(screen.getByLabelText('Fase grupo signal-group-1'), { target: { value: 'phase-1' } });
+    fireEvent.change(screen.getByLabelText('Verde efectivo grupo signal-group-1'), { target: { value: '40' } });
+    expect(screen.getByLabelText('Fase grupo signal-group-1')).toHaveValue('phase-1');
     expect(screen.getByLabelText('Verde efectivo grupo signal-group-1')).toHaveValue(40);
+    expect(screen.queryByLabelText('Carriles grupo signal-group-1')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Saturación grupo signal-group-1')).not.toBeInTheDocument();
   });
 
   it('shows incomplete validation state until observed capture is complete', () => {
