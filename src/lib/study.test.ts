@@ -25,7 +25,6 @@ describe('study configuration editing', () => {
       intervalMinutes: 10,
       surveyor: 'Hiram',
       weather: 'Despejado',
-      observedSaturationFlowPerLane: 1800,
       notes: 'Estudio matutino',
     };
 
@@ -110,32 +109,45 @@ describe('study configuration editing', () => {
     });
   });
 
-  it('adds, edits, and removes explicit movement-phase assignments', () => {
-    const base = updateProgramPhaseCount(createDefaultStudy('INT-002'), 'p1', 1);
+  it('creates physical lane groups before signal phases and stores saturation origin separately', () => {
+    const base = createDefaultStudy('INT-002');
     const added = addSignalMovementAssignment(base);
     const assignment = added.configurationSnapshot.signalMovementAssignments?.[0];
     expect(assignment).toMatchObject({
       accessId: 'north',
       movement: 'through',
       programId: 'p1',
-      phaseId: 'phase-1',
+      phaseId: '',
       lanes: null,
       saturationFlowPerLane: null,
+      saturationSource: 'unknown',
       effectiveGreenSeconds: null,
     });
 
-    const updated = updateSignalMovementAssignment(added, assignment!.id, {
+    const configured = updateSignalMovementAssignment(added, assignment!.id, {
       lanes: 2,
       saturationFlowPerLane: 1800,
+      saturationSource: 'measured',
+    });
+    expect(configured.configurationSnapshot.signalMovementAssignments?.[0]).toMatchObject({
+      lanes: 2,
+      saturationFlowPerLane: 1800,
+      saturationSource: 'measured',
+      phaseId: '',
+      effectiveGreenSeconds: null,
+    });
+
+    const withPhase = updateProgramPhaseCount(configured, 'p1', 1);
+    const timed = updateSignalMovementAssignment(withPhase, assignment!.id, {
+      phaseId: 'phase-1',
       effectiveGreenSeconds: 40,
     });
-    expect(updated.configurationSnapshot.signalMovementAssignments?.[0]).toMatchObject({
-      lanes: 2,
-      saturationFlowPerLane: 1800,
+    expect(timed.configurationSnapshot.signalMovementAssignments?.[0]).toMatchObject({
+      phaseId: 'phase-1',
       effectiveGreenSeconds: 40,
     });
 
-    const removed = removeSignalMovementAssignment(updated, assignment!.id);
+    const removed = removeSignalMovementAssignment(timed, assignment!.id);
     expect(removed.configurationSnapshot.signalMovementAssignments).toEqual([]);
   });
 
@@ -146,11 +158,10 @@ describe('study configuration editing', () => {
     expect(updateProgram(validated, 'p1', { cycleSeconds: 90 }).status).toBe('draft');
     expect(updateProgramPhaseCount(validated, 'p1', 1).status).toBe('draft');
 
-    const withPhase = updateProgramPhaseCount(createDefaultStudy('INT-002'), 'p1', 1);
-    const withGroup = addSignalMovementAssignment(withPhase);
+    const withGroup = addSignalMovementAssignment(createDefaultStudy('INT-002'));
     const assignment = withGroup.configurationSnapshot.signalMovementAssignments![0];
     const exported = { ...withGroup, status: 'exported' as const };
-    expect(updateSignalMovementAssignment(exported, assignment.id, { effectiveGreenSeconds: 40 }).status).toBe('draft');
+    expect(updateSignalMovementAssignment(exported, assignment.id, { saturationFlowPerLane: 1800 }).status).toBe('draft');
     expect(removeSignalMovementAssignment(exported, assignment.id).status).toBe('draft');
   });
 
