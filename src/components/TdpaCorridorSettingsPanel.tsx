@@ -6,12 +6,20 @@ import {
   resolveTdpaCorridorSettings,
   updateTdpaMovementPercentage,
 } from '../lib/tdpaCorridorSettings';
+import { InfoHint } from './InfoHint';
 
 const movementLabels: Record<MovementKey, string> = {
   left: 'Izquierda',
   through: 'Frente',
   right: 'Derecha',
   uTurn: 'Retorno',
+};
+
+const movementHelp: Record<MovementKey, string> = {
+  left: 'Porcentaje del flujo de este acceso que gira a la izquierda. El sistema lo aplicará al volumen horario estimado del acceso.',
+  through: 'Porcentaje del flujo de este acceso que continúa de frente. El sistema lo aplicará al volumen horario estimado del acceso.',
+  right: 'Porcentaje del flujo de este acceso que gira a la derecha. El sistema lo aplicará al volumen horario estimado del acceso.',
+  uTurn: 'Porcentaje del flujo de este acceso que realiza retorno. Manténgalo en 0% cuando ese movimiento no exista o no deba estimarse.',
 };
 
 interface TdpaCorridorSettingsPanelProps {
@@ -39,11 +47,21 @@ export function TdpaCorridorSettingsPanel({ study, onChange }: TdpaCorridorSetti
 
     return (
       <article className="access-card" key={`${directionLabel}-${access.id}`}>
-        <h4>{directionLabel}: {access.name}</h4>
+        <h4 style={{ alignItems: 'center', display: 'flex', gap: 4 }}>
+          {directionLabel}: {access.name}
+          <InfoHint label={`Distribución ${access.name}`}>
+            La distribución indica cómo se reparte el volumen estimado que entra por este acceso entre los movimientos habilitados. Debe sumar exactamente 100%.
+          </InfoHint>
+        </h4>
         <div className="form-grid">
           {(Object.keys(movementLabels) as MovementKey[]).map((movement) => (
             <label key={movement}>
-              {movementLabels[movement]} (%)
+              <span style={{ alignItems: 'center', display: 'inline-flex', gap: 4 }}>
+                {movementLabels[movement]} (%)
+                <InfoHint label={`${movementLabels[movement]} ${access.name}`}>
+                  {movementHelp[movement]}
+                </InfoHint>
+              </span>
               <input
                 aria-label={`Porcentaje ${movementLabels[movement]} ${access.name}`}
                 disabled={!access.movements[movement]}
@@ -76,15 +94,32 @@ export function TdpaCorridorSettingsPanel({ study, onChange }: TdpaCorridorSetti
     <section className="panel" aria-label="Configuración TDPA del corredor">
       <div className="section-heading">
         <div>
-          <h3>Estimación TDPA del corredor</h3>
+          <h3 style={{ alignItems: 'center', display: 'flex', gap: 4 }}>
+            Estimación TDPA del corredor
+            <InfoHint label="Estimación TDPA del corredor">
+              Esta configuración convierte el volumen TDPA del tramo en volúmenes estimados por acceso y movimiento. No representa un conteo físico observado en campo.
+            </InfoHint>
+          </h3>
           <p className="section-description">
             Seleccione los dos accesos que representan la carretera y ajuste la distribución de giros. Cada acceso debe sumar exactamente 100% antes de generar el aforo estimado.
           </p>
         </div>
       </div>
+
+      <div aria-label="Guía de configuración TDPA" style={{ borderLeft: '3px solid var(--navy-600)', marginBottom: 18, padding: '2px 0 2px 12px' }}>
+        <p style={{ marginBottom: 6 }}><strong>Qué vas a hacer:</strong> identificar por qué accesos entra el flujo del corredor y cómo se reparte entre izquierda, frente, derecha y retorno.</p>
+        <p style={{ marginBottom: 6 }}><strong>Por qué es necesario:</strong> el TDPA aporta volumen del tramo, pero no indica directamente qué movimiento realiza cada vehículo en esta intersección.</p>
+        <p style={{ marginBottom: 0 }}><strong>Para continuar:</strong> usa accesos diferentes para ambos sentidos y completa 100% de distribución en cada uno. Estos datos serán la base del aforo estimado.</p>
+      </div>
+
       <div className="form-grid">
         <label>
-          Sentido principal
+          <span style={{ alignItems: 'center', display: 'inline-flex', gap: 4 }}>
+            Sentido principal
+            <InfoHint label="Sentido principal">
+              Acceso que recibirá el volumen correspondiente al factor direccional D del archivo TDPA. Debe representar uno de los sentidos reales de circulación del corredor.
+            </InfoHint>
+          </span>
           <select
             aria-label="Sentido principal"
             value={settings.mainDirectionAccessId}
@@ -94,7 +129,12 @@ export function TdpaCorridorSettingsPanel({ study, onChange }: TdpaCorridorSetti
           </select>
         </label>
         <label>
-          Sentido opuesto
+          <span style={{ alignItems: 'center', display: 'inline-flex', gap: 4 }}>
+            Sentido opuesto
+            <InfoHint label="Sentido opuesto">
+              Acceso de la misma carretera que recibe el volumen restante después de aplicar la distribución direccional. Debe ser distinto del sentido principal.
+            </InfoHint>
+          </span>
           <select
             aria-label="Sentido opuesto"
             value={settings.oppositeDirectionAccessId}
@@ -111,7 +151,7 @@ export function TdpaCorridorSettingsPanel({ study, onChange }: TdpaCorridorSetti
         {renderDistribution(settings.mainDirectionAccessId, 'Sentido principal')}
         {renderDistribution(settings.oppositeDirectionAccessId, 'Sentido opuesto')}
       </div>
-      <small>Modelo inicial: 10% izquierda, 80% frente, 10% derecha y 0% retorno. Los movimientos deshabilitados físicamente se mantienen en 0%.</small>
+      <small><strong>Modelo inicial:</strong> 10% izquierda, 80% frente, 10% derecha y 0% retorno. Los movimientos deshabilitados físicamente se mantienen en 0%. <strong>Obligatorio para TDPA:</strong> cada acceso seleccionado debe sumar exactamente 100%.</small>
     </section>
   );
 }
