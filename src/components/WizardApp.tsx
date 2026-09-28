@@ -583,6 +583,49 @@ export function WizardApp() {
     });
   }
 
+  function deleteActiveIntersection(): void {
+    if (!selectedIntersection) return;
+    const deletedIntersectionId = selectedIntersection.id;
+    if (!window.confirm(`¿Eliminar ${deletedIntersectionId}? Se borrarán el marcador y todos los datos capturados para esta intersección. Esta acción no se puede deshacer.`)) return;
+
+    const nextIntersections = customIntersections
+      .filter((intersection) => intersection.id !== deletedIntersectionId)
+      .map((intersection) => ({
+        ...intersection,
+        relatedIntersectionIds: (intersection.relatedIntersectionIds ?? []).filter((id) => id !== deletedIntersectionId),
+      }));
+    const nextConfigs = { ...state.intersectionConfigs };
+    delete nextConfigs[deletedIntersectionId];
+    const nextStudies = Object.fromEntries(
+      Object.entries(studiesByIntersection)
+        .filter(([intersectionId]) => intersectionId !== deletedIntersectionId)
+        .map(([intersectionId, study]) => [
+          intersectionId,
+          {
+            ...study,
+            relatedIntersectionIds: (study.relatedIntersectionIds ?? []).filter((id) => id !== deletedIntersectionId),
+            updatedAt: new Date().toISOString(),
+          },
+        ]),
+    );
+    const nextActiveStudy = {
+      ...createDefaultStudy(UNASSIGNED_INTERSECTION_ID, studyTemplate),
+      currentStep: 1,
+    };
+
+    setRoadTrafficImport(null);
+    setRoadTrafficImportError(null);
+    setPendingCaptureFocusId(null);
+    persist({
+      ...state,
+      customIntersections: nextIntersections,
+      intersectionConfigs: nextConfigs,
+      lastConfiguration: state.lastConfiguration?.intersectionId === deletedIntersectionId ? null : state.lastConfiguration,
+      studiesByIntersection: nextStudies,
+      activeStudy: nextActiveStudy,
+    });
+  }
+
   function clearEntireStudy(): void {
     if (!window.confirm('¿Borrar todo el estudio, todas las intersecciones y toda la memoria guardada?')) return;
     localStorage.removeItem(STORAGE_KEY);
@@ -681,7 +724,10 @@ export function WizardApp() {
                 <>
                   <div className="intersection-card-heading">
                     <h3>{selectedIntersection.id}</h3>
-                    <button className="danger-secondary" onClick={clearActiveIntersection} type="button"><Eraser size={15} /> Limpiar campos</button>
+                    <span>
+                      <button className="danger-secondary" onClick={clearActiveIntersection} type="button"><Eraser size={15} /> Limpiar campos</button>{' '}
+                      <button className="danger-button" onClick={deleteActiveIntersection} type="button"><Trash2 size={15} /> Eliminar punto</button>
+                    </span>
                   </div>
                   <label>Clave de interseccion<input defaultValue={selectedIntersection.id} key={`id-${selectedIntersection.id}`} onBlur={(event) => renameIntersection(event.target.value)} /></label>
                   <label>Nombre<input value={selectedIntersection.name} onChange={(event) => updateIntersection({ name: event.target.value })} /></label>
