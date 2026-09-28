@@ -148,7 +148,7 @@ describe('capture calculations', () => {
     expect(summary.isPartial).toBe(true);
   });
 
-  it('keeps the first peak-hour window on a tie and marks the tie', () => {
+  it('keeps the first peak-hour window on a tie and emits the required warning', () => {
     const fiveIntervals = [
       interval('07:00', '07:15'),
       interval('07:15', '07:30'),
@@ -159,6 +159,7 @@ describe('capture calculations', () => {
     const rows = fiveIntervals.map((item) => row(item, { through: 100 }));
     const summary = calculateStudySummary(rows, [access], 15);
     expect(summary.peakHour).toMatchObject({ label: '07:00-08:00', volume: 400, tie: true });
+    expect(summary.warnings).toContain('Existe empate entre ventanas de hora pico; se conserva la primera.');
   });
 
   it.each([
