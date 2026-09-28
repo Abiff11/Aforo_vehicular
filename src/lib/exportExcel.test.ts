@@ -228,4 +228,20 @@ describe('exportStudyWorkbook calculation integrity', () => {
     expect(indicatorMap.get('Volumen total observado')).toBe('N/D');
     expect(indicatorMap.get('FHP observado')).toBe('N/D');
   });
+
+  it('adds deliberate executive presentation metadata to the workbook', () => {
+    const workbook = exportStudyWorkbook(createFormalStudy(), intersections[0]);
+    const ficha = workbook.Sheets['01_FICHA_TECNICA'];
+    const dashboard = workbook.Sheets['02_DASHBOARD'];
+    const detailed = workbook.Sheets['03_AFORO_DETALLADO'];
+
+    expect(ficha['A1']?.v).toBe('FICHA TÉCNICA DE AFORO – INTERSECCIÓN SEMAFORIZADA');
+    expect(ficha['!rows']?.[0]?.hpt).toBeGreaterThanOrEqual(24);
+    expect(ficha['!margins']).toBeDefined();
+    expect(dashboard['A1']?.v).toBe('RESUMEN EJECUTIVO DEL ESTUDIO');
+    expect(dashboard['!merges']).toContainEqual({ s: { r: 0, c: 0 }, e: { r: 0, c: 2 } });
+    expect(dashboard['!cols']?.[0]?.wch).toBeGreaterThanOrEqual(30);
+    expect(detailed['A1']?.v).toBe('AFORO DETALLADO');
+    expect(detailed['!autofilter']?.ref).toMatch(/^A4:/);
+  });
 });
