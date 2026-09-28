@@ -276,8 +276,11 @@ export function calculateStudySummary(
         intervalIds: window.map((item) => item.intervalId),
         tie: false,
       };
-      if (!peakHour || candidate.volume > peakHour.volume) peakHour = candidate;
-      else if (candidate.volume === peakHour.volume) peakHour = { ...peakHour, tie: true };
+      if (!peakHour || candidate.volume > peakHour.volume) {
+        peakHour = candidate;
+      } else if (candidate.volume === peakHour.volume) {
+        peakHour.tie = true;
+      }
     }
   }
 
