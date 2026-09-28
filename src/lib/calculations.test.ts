@@ -127,6 +127,39 @@ describe('capture calculations', () => {
     expect(summary.isPartial).toBe(true);
   });
 
+  it('keeps partial captured volume separate from definitive chart aggregates', () => {
+    const rows = [
+      row(intervals[0], { through: 100 }),
+      row(intervals[1], { left: null, through: 200 }),
+    ];
+    const summary = calculateStudySummary(rows, [access], 15);
+
+    expect(summary.totalMotorized).toBe(300);
+    expect(summary.byAccess).toEqual([{ accessId: 'north', accessName: 'Norte', volume: 100 }]);
+    expect(summary.byMovement.find((item) => item.movement === 'Frente')).toMatchObject({ volume: 100, percent: 100 });
+    expect(summary.averageIntervalVolume).toBe(100);
+  });
+
+  it('excludes an entire interval from definitive aggregates when one access row is incomplete', () => {
+    const south: AccessConfig = { ...access, id: 'south', name: 'Sur' };
+    const northRow = row(intervals[0], { through: 100 });
+    const southRow = {
+      ...row(intervals[0], { left: null, through: 80 }),
+      id: 'south-incomplete',
+      accessId: 'south',
+      accessName: 'Sur',
+    };
+    const summary = calculateStudySummary([northRow, southRow], [access, south], 15);
+
+    expect(summary.totalMotorized).toBe(180);
+    expect(summary.byInterval[0].complete).toBe(false);
+    expect(summary.byAccess).toEqual([
+      { accessId: 'north', accessName: 'Norte', volume: 0 },
+      { accessId: 'south', accessName: 'Sur', volume: 0 },
+    ]);
+    expect(summary.averageIntervalVolume).toBe(0);
+  });
+
   it('calculates peak hour and FHP from a mobile one-hour window', () => {
     const rows = [
       row(intervals[0], { left: 10, through: 90, right: 0 }),

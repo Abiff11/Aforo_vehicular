@@ -11,7 +11,7 @@ export const wizardSteps: WizardStep[] = [
     helpTitle: 'Definir los datos comunes del estudio',
     helpBody:
       'Captura primero la fecha, horario, intervalo, aforador, clima y observaciones generales. Estos datos se conservan como memoria comun y se reutilizan automaticamente al trabajar con distintas intersecciones del mismo estudio.',
-    helpChecklist: ['Usa una hora de termino posterior a la inicial.', 'Elige intervalos de 5, 10, 15, 20 o 30 minutos.', 'Completa los datos comunes antes de crear o seleccionar intersecciones.'],
+    helpChecklist: ['La hora de termino puede corresponder al dia siguiente.', 'Elige intervalos de 5, 10, 15, 20 o 30 minutos.', 'Completa los datos comunes antes de crear o seleccionar intersecciones.'],
   },
   {
     label: 'Interseccion',

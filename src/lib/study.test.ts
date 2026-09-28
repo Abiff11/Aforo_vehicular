@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   addSignalMovementAssignment,
+  addSignalProgram,
   createDefaultStudy,
   hasCapturedData,
   markStudyExported,
   rebuildStudyRowsPreservingCapture,
   removeSignalMovementAssignment,
+  removeSignalProgram,
   updateAccessConfig,
   updateAccessMovement,
   updateProgram,
@@ -49,6 +51,43 @@ describe('study configuration editing', () => {
       phases: null,
     });
     expect(study.configurationSnapshot.signalMovementAssignments).toEqual([]);
+  });
+
+  it('adds contiguous signal programs without inventing timing values', () => {
+    const study = createDefaultStudy('INT-002');
+    const updated = addSignalProgram(study);
+
+    expect(updated.configurationSnapshot.programs).toHaveLength(2);
+    expect(updated.configurationSnapshot.programs[1]).toMatchObject({
+      id: 'p2',
+      name: 'P2',
+      startTime: '09:00',
+      endTime: '10:00',
+      cycleSeconds: null,
+      phases: null,
+      phaseTimings: [],
+    });
+  });
+
+  it('reassigns groups when deleting a program and never deletes the final program', () => {
+    const base = updateProgramPhaseCount(addSignalProgram(createDefaultStudy('INT-002')), 'p2', 1);
+    const withGroup = addSignalMovementAssignment(base);
+    const assignment = withGroup.configurationSnapshot.signalMovementAssignments![0];
+    const assignedToP2 = updateSignalMovementAssignment(withGroup, assignment.id, {
+      programId: 'p2',
+      phaseId: 'phase-1',
+      effectiveGreenSeconds: 30,
+    });
+
+    const removed = removeSignalProgram(assignedToP2, 'p2');
+    expect(removed.configurationSnapshot.programs.map((program) => program.id)).toEqual(['p1']);
+    expect(removed.configurationSnapshot.signalMovementAssignments?.[0]).toMatchObject({
+      programId: 'p1',
+      phaseId: '',
+      effectiveGreenSeconds: null,
+    });
+
+    expect(removeSignalProgram(removed, 'p1')).toBe(removed);
   });
 
   it('updates access name, lanes, and movement availability without inventing a zero observation', () => {
@@ -156,6 +195,7 @@ describe('study configuration editing', () => {
     expect(updateAccessConfig(validated, 'north', { lanes: 3 }).status).toBe('draft');
     expect(updateAccessMovement(validated, 'north', 'uTurn', true).status).toBe('draft');
     expect(updateProgram(validated, 'p1', { cycleSeconds: 90 }).status).toBe('draft');
+    expect(addSignalProgram(validated).status).toBe('draft');
     expect(updateProgramPhaseCount(validated, 'p1', 1).status).toBe('draft');
 
     const withGroup = addSignalMovementAssignment(createDefaultStudy('INT-002'));

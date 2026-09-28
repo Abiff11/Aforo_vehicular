@@ -1,13 +1,24 @@
 import { createDefaultStudyMetadata } from './study';
-import type { IntersectionConfig, StoredState, Study, StudyMetadata, VersionedStoredState } from './types';
+import type { Intersection, IntersectionConfig, StoredState, Study, StudyMetadata, VersionedStoredState } from './types';
 
 export const STORAGE_KEY = 'aforos.state.v1';
 
 const LEGACY_STEP_TO_STUDY_FIRST_STEP = [1, 2, 3, 0, 4, 5, 6, 7] as const;
+const LEGACY_CATALOG_VERSION = '2026-09-25';
+const MANUAL_MAP_VERSION = 'manual-map-v1';
+const LEGACY_CATALOG_IDS = new Set(
+  Array.from({ length: 47 }, (_, index) => `INT-${String(index + 1).padStart(3, '0')}`),
+);
 
 function defaultStudiesByIntersection(activeStudy: Study | null): Record<string, Study> {
   if (!activeStudy || activeStudy.intersectionId.startsWith('__')) return {};
   return { [activeStudy.intersectionId]: activeStudy };
+}
+
+function migrateIntersections(savedIntersections: Intersection[] | undefined, catalogVersion: string | undefined): Intersection[] {
+  const saved = savedIntersections ?? [];
+  if (catalogVersion !== LEGACY_CATALOG_VERSION) return saved;
+  return saved.filter((intersection) => !LEGACY_CATALOG_IDS.has(intersection.id));
 }
 
 function migrateMetadata(metadata: StudyMetadata): StudyMetadata {
@@ -64,7 +75,7 @@ function migrateStudies(
 
 export function createInitialState(): StoredState {
   return {
-    catalogVersion: '2026-09-25',
+    catalogVersion: MANUAL_MAP_VERSION,
     customIntersections: [],
     intersectionConfigs: {},
     lastConfiguration: null,
@@ -79,6 +90,7 @@ export function saveStoredState(state: StoredState): void {
   const payload: VersionedStoredState = {
     schemaVersion: 3,
     ...state,
+    catalogVersion: MANUAL_MAP_VERSION,
     customIntersections: state.customIntersections ?? [],
     studyTemplate: migrateMetadata(state.studyTemplate ?? defaultStudyTemplate(state.activeStudy)),
     studiesByIntersection: state.studiesByIntersection ?? defaultStudiesByIntersection(state.activeStudy),
@@ -115,8 +127,9 @@ export function loadStoredState(): VersionedStoredState {
     return {
       ...parsed,
       schemaVersion: 3,
+      catalogVersion: MANUAL_MAP_VERSION,
       activeStudy,
-      customIntersections: parsed.customIntersections ?? [],
+      customIntersections: migrateIntersections(parsed.customIntersections, parsed.catalogVersion),
       intersectionConfigs,
       lastConfiguration: parsed.lastConfiguration ? migrateConfig(parsed.lastConfiguration) : null,
       studyTemplate: parsed.studyTemplate ? migrateMetadata(parsed.studyTemplate) : defaultStudyTemplate(activeStudy),

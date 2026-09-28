@@ -44,11 +44,11 @@ function DashboardChart({
       <div className="chart-frame" aria-label={`Gráfica: ${title}`} role="img">
         <ResponsiveContainer height={260} width="100%">
           <BarChart data={data} margin={{ top: 8, right: 12, left: 4, bottom: 34 }}>
-            <CartesianGrid strokeDasharray="3 3" />
+            <CartesianGrid stroke="#d7dee8" strokeDasharray="3 3" />
             <XAxis angle={-25} dataKey={labelKey} height={62} interval={0} textAnchor="end" tick={{ fontSize: 11 }} />
             <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={54} />
             <Tooltip formatter={(value) => numberFormat.format(Number(value))} />
-            <Bar dataKey={dataKey} fill="#1f6feb" name="Volumen" radius={[4, 4, 0, 0]} />
+            <Bar dataKey={dataKey} fill="#244767" name="Volumen" radius={[6, 6, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -58,26 +58,30 @@ function DashboardChart({
 
 function TdpaPanel({ estimate }: { estimate: TdpaEstimate | null | undefined }) {
   return (
-    <>
+    <section aria-label="Estimación TDPA" className="tdpa-estimate panel">
+      <div className="section-heading">
+        <div>
+          <p className="section-eyebrow">Referencia complementaria</p>
+          <h3>Estimación TDPA</h3>
+        </div>
+        <span className="status-pill">Estimado</span>
+      </div>
       <p className="warning">ESTIMACIÓN TDPA — NO SUSTITUYE UN AFORO DE INTERSECCIÓN EN CAMPO.</p>
-      <section className="dashboard-table panel">
-        <h3>Estimación TDPA</h3>
-        {!estimate ? (
-          <p>N/D — no existe un registro TDPA válido asociado.</p>
-        ) : (
-          <div className="dashboard-kpis">
-            <article className="kpi"><span>TDPA</span><strong>{numberFormat.format(estimate.dailyTraffic)}</strong></article>
-            <article className="kpi"><span>K&apos;</span><strong>{estimate.designHourFactor.toFixed(3)}</strong></article>
-            <article className="kpi"><span>D</span><strong>{estimate.directionalDistribution.toFixed(3)}</strong></article>
-            <article className="kpi"><span>Volumen hora de diseño estimado</span><strong>{numberFormat.format(estimate.designHourTotal)}</strong></article>
-            <article className="kpi"><span>Dirección principal estimada</span><strong>{numberFormat.format(estimate.mainDirectionHour)}</strong></article>
-            <article className="kpi"><span>Dirección opuesta estimada</span><strong>{numberFormat.format(estimate.oppositeDirectionHour)}</strong></article>
-            <article className="kpi"><span>Motos/h estimadas</span><strong>{numberFormat.format(estimate.hourlyMotorcycles)}</strong></article>
-            <article className="kpi"><span>Pesados/h estimados</span><strong>{numberFormat.format(estimate.hourlyHeavyVehicles)}</strong></article>
-          </div>
-        )}
-      </section>
-    </>
+      {!estimate ? (
+        <p>N/D — no existe un registro TDPA válido asociado.</p>
+      ) : (
+        <div className="dashboard-kpis">
+          <article className="kpi"><span>TDPA</span><strong>{numberFormat.format(estimate.dailyTraffic)}</strong></article>
+          <article className="kpi"><span>K&apos;</span><strong>{estimate.designHourFactor.toFixed(3)}</strong></article>
+          <article className="kpi"><span>D</span><strong>{estimate.directionalDistribution.toFixed(3)}</strong></article>
+          <article className="kpi"><span>Volumen hora de diseño estimado</span><strong>{numberFormat.format(estimate.designHourTotal)}</strong></article>
+          <article className="kpi"><span>Dirección principal estimada</span><strong>{numberFormat.format(estimate.mainDirectionHour)}</strong></article>
+          <article className="kpi"><span>Dirección opuesta estimada</span><strong>{numberFormat.format(estimate.oppositeDirectionHour)}</strong></article>
+          <article className="kpi"><span>Motos/h estimadas</span><strong>{numberFormat.format(estimate.hourlyMotorcycles)}</strong></article>
+          <article className="kpi"><span>Pesados/h estimados</span><strong>{numberFormat.format(estimate.hourlyHeavyVehicles)}</strong></article>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -90,20 +94,23 @@ export function ResultsDashboard({
 }: ResultsDashboardProps) {
   if (source === 'estimated_tdpa') {
     return (
-      <div className="results-dashboard">
+      <section aria-label="Resumen ejecutivo de resultados" className="results-dashboard">
         <TdpaPanel estimate={tdpaEstimate} />
-      </div>
+      </section>
     );
   }
 
-  const intervalChartData = summary.byInterval.map((interval) => ({ label: interval.label, volumen: interval.total }));
+  const intervalChartData = summary.byInterval
+    .filter((interval) => interval.complete)
+    .map((interval) => ({ label: interval.label, volumen: interval.total }));
   const accessChartData = summary.byAccess.map((access) => ({ label: access.accessName, volumen: access.volume }));
   const movementChartData = summary.byMovement.map((movement) => ({ label: movement.movement, volumen: movement.volume }));
+  const hasCompleteIntervals = intervalChartData.length > 0;
   const cycleSummaries = summary.cycleSummaries ?? [];
   const signalGroups = summary.signalGroupIndicators ?? [];
 
   return (
-    <div className="results-dashboard">
+    <section aria-label="Resumen ejecutivo de resultados" className="results-dashboard">
       {summary.isPartial && <p className="warning">Resultados parciales: la captura observada no está completa.</p>}
       {legacyUnverified && <p className="warning">Captura heredada pendiente de revisión: los ceros históricos no pueden distinguirse de valores iniciales.</p>}
       {(summary.warnings?.length ?? 0) > 0 && (
@@ -113,21 +120,30 @@ export function ResultsDashboard({
         </section>
       )}
 
-      <div className="dashboard-kpis">
-        <article className="kpi">
-          <span>{summary.isComplete ? 'Volumen total observado' : 'Volumen registrado parcial'}</span>
-          <strong>{numberFormat.format(summary.totalMotorized)}</strong>
-        </article>
-        <article className="kpi"><span>Completitud</span><strong>{summary.completionPercent.toFixed(1)}%</strong></article>
-        <article className="kpi"><span>Intervalo máximo válido</span><strong>{summary.peakInterval ? `${summary.peakInterval.label} · ${numberFormat.format(summary.peakInterval.volume)}` : 'N/D'}</strong></article>
-        <article className="kpi"><span>Hora de máxima demanda</span><strong>{summary.peakHour ? `${summary.peakHour.label} · ${numberFormat.format(summary.peakHour.volume)}` : 'N/D'}</strong></article>
-        <article className="kpi"><span><abbr title="Factor de Hora Pico">{summary.peakHour?.factorLabel ?? 'FHP'}</abbr></span><strong>{summary.peakHour?.factor === null || summary.peakHour?.factor === undefined ? 'N/D' : summary.peakHour.factor.toFixed(3)}</strong></article>
-        <article className="kpi"><span>Promedio {intervalMinutes} min capturado</span><strong>{formatNullable(summary.averageIntervalVolume, 1)}</strong></article>
-        <article className="kpi"><span>Pesados capturados</span><strong>{numberFormat.format(summary.totalHeavy)}</strong></article>
-        <article className="kpi"><span>Motos capturadas</span><strong>{numberFormat.format(summary.totalMotorcycles)}</strong></article>
-        <article className="kpi"><span>Bicicletas capturadas</span><strong>{numberFormat.format(summary.totalBicycles)}</strong></article>
-        <article className="kpi"><span>Peatones capturados</span><strong>{numberFormat.format(summary.totalPedestrians)}</strong></article>
-      </div>
+      <section aria-label="Resumen ejecutivo del aforo" className="results-summary panel">
+        <div className="section-heading">
+          <div>
+            <p className="section-eyebrow">Resumen ejecutivo</p>
+            <h2>Resultados del aforo</h2>
+          </div>
+          <span className="status-pill">{summary.isComplete ? 'Captura completa' : 'Captura parcial'}</span>
+        </div>
+        <div className="dashboard-kpis">
+          <article className="kpi">
+            <span>{summary.isComplete ? 'Volumen total observado' : 'Volumen registrado parcial'}</span>
+            <strong>{numberFormat.format(summary.totalMotorized)}</strong>
+          </article>
+          <article className="kpi"><span>Completitud</span><strong>{summary.completionPercent.toFixed(1)}%</strong></article>
+          <article className="kpi"><span>Intervalo máximo válido</span><strong>{summary.peakInterval ? `${summary.peakInterval.label} · ${numberFormat.format(summary.peakInterval.volume)}` : 'N/D'}</strong></article>
+          <article className="kpi"><span>Hora de máxima demanda</span><strong>{summary.peakHour ? `${summary.peakHour.label} · ${numberFormat.format(summary.peakHour.volume)}` : 'N/D'}</strong></article>
+          <article className="kpi"><span><abbr title="Factor de Hora Pico">{summary.peakHour?.factorLabel ?? 'FHP'}</abbr></span><strong>{summary.peakHour?.factor === null || summary.peakHour?.factor === undefined ? 'N/D' : summary.peakHour.factor.toFixed(3)}</strong></article>
+          <article className="kpi"><span>Promedio {intervalMinutes} min válido</span><strong>{hasCompleteIntervals ? formatNullable(summary.averageIntervalVolume, 1) : 'N/D'}</strong></article>
+          <article className="kpi"><span>Pesados capturados</span><strong>{numberFormat.format(summary.totalHeavy)}</strong></article>
+          <article className="kpi"><span>Motos capturadas</span><strong>{numberFormat.format(summary.totalMotorcycles)}</strong></article>
+          <article className="kpi"><span>Bicicletas capturadas</span><strong>{numberFormat.format(summary.totalBicycles)}</strong></article>
+          <article className="kpi"><span>Peatones capturados</span><strong>{numberFormat.format(summary.totalPedestrians)}</strong></article>
+        </div>
+      </section>
 
       <section className="panel">
         <h3>Calidad de captura</h3>
@@ -139,11 +155,18 @@ export function ResultsDashboard({
         </div>
       </section>
 
-      <div className="dashboard-charts">
-        <DashboardChart title="Volumen por intervalo" data={intervalChartData} dataKey="volumen" labelKey="label" />
-        <DashboardChart title="Volumen por acceso" data={accessChartData} dataKey="volumen" labelKey="label" />
-        <DashboardChart title="Distribución por movimiento" data={movementChartData} dataKey="volumen" labelKey="label" />
-      </div>
+      {hasCompleteIntervals ? (
+        <section aria-label="Resultados observados" className="dashboard-charts charts">
+          <DashboardChart title="Volumen por intervalo" data={intervalChartData} dataKey="volumen" labelKey="label" />
+          <DashboardChart title="Volumen por acceso" data={accessChartData} dataKey="volumen" labelKey="label" />
+          <DashboardChart title="Distribución por movimiento" data={movementChartData} dataKey="volumen" labelKey="label" />
+        </section>
+      ) : (
+        <section className="panel">
+          <h3>Resultados observados no disponibles</h3>
+          <p>N/D — complete al menos un intervalo entero para habilitar las gráficas observadas.</p>
+        </section>
+      )}
 
       <section className="dashboard-table panel">
         <h3>Aforo consolidado por intervalo</h3>
@@ -229,6 +252,6 @@ export function ResultsDashboard({
       </section>
 
       {tdpaEstimate && <TdpaPanel estimate={tdpaEstimate} />}
-    </div>
+    </section>
   );
 }

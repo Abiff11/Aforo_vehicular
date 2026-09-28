@@ -7,7 +7,7 @@ describe('local storage persistence', () => {
     localStorage.clear();
   });
 
-  it('starts with shared study metadata and an empty per-intersection study registry', () => {
+  it('starts with shared study metadata and an empty manually created intersection list', () => {
     const state = createInitialState();
 
     expect(state.studyTemplate).toMatchObject({
@@ -18,6 +18,8 @@ describe('local storage persistence', () => {
       weather: '',
     });
     expect(state.studyTemplate).not.toHaveProperty('observedSaturationFlowPerLane');
+    expect(state.catalogVersion).toBe('manual-map-v1');
+    expect(state.customIntersections).toEqual([]);
     expect(state.studiesByIntersection).toEqual({});
   });
 
@@ -33,6 +35,7 @@ describe('local storage persistence', () => {
 
     expect(loadStoredState()).toMatchObject({
       schemaVersion: 3,
+      catalogVersion: 'manual-map-v1',
       activeStudy: {
         intersectionId: 'INT-001',
         currentStep: 0,
@@ -45,6 +48,76 @@ describe('local storage persistence', () => {
       },
       preferences: { intervalMinutes: 15 },
     });
+  });
+
+  it('removes the old seeded catalog while preserving intersections created after it', () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        schemaVersion: 3,
+        ...createInitialState(),
+        catalogVersion: '2026-09-25',
+        customIntersections: [
+          {
+            id: 'INT-001',
+            mapNumber: 1,
+            name: 'Intersección precargada',
+            municipality: 'Oaxaca de Juárez',
+            locality: 'Oaxaca de Juárez',
+            verificationStatus: 'verified',
+            latitude: 17.07,
+            longitude: -96.72,
+            notes: '',
+          },
+          {
+            id: 'INT-047',
+            mapNumber: 47,
+            name: 'Intersección precargada 47',
+            municipality: 'Oaxaca de Juárez',
+            locality: 'Oaxaca de Juárez',
+            verificationStatus: 'verified',
+            latitude: 17.05,
+            longitude: -96.70,
+            notes: '',
+          },
+          {
+            id: 'INT-048',
+            mapNumber: 48,
+            name: 'Punto creado por el usuario',
+            municipality: 'Oaxaca de Juárez',
+            locality: 'Oaxaca de Juárez',
+            verificationStatus: 'pending',
+            latitude: 17.06,
+            longitude: -96.73,
+            notes: '',
+          },
+        ],
+      }),
+    );
+
+    const loaded = loadStoredState();
+    const loadedIntersections = loaded.customIntersections ?? [];
+
+    expect(loaded.catalogVersion).toBe('manual-map-v1');
+    expect(loadedIntersections).toHaveLength(1);
+    expect(loadedIntersections[0]).toMatchObject({ id: 'INT-048', name: 'Punto creado por el usuario' });
+  });
+
+  it('keeps manually created low-numbered intersections after migration is complete', () => {
+    const manualIntersection = {
+      id: 'INT-001',
+      mapNumber: 1,
+      name: 'Punto manual',
+      municipality: 'Oaxaca de Juárez',
+      locality: 'Oaxaca de Juárez',
+      verificationStatus: 'pending' as const,
+      latitude: 17.06,
+      longitude: -96.73,
+      notes: '',
+    };
+    saveStoredState({ ...createInitialState(), customIntersections: [manualIntersection] });
+
+    expect(loadStoredState().customIntersections).toEqual([manualIntersection]);
   });
 
   it('migrates schema 2 by dropping global saturation and preserving lane-group saturation with unknown origin', () => {

@@ -3,6 +3,14 @@ export type StudySource = 'observed' | 'estimated_tdpa';
 export type RowState = 'complete' | 'incomplete' | 'error';
 export type StudyStatus = 'draft' | 'incomplete' | 'validated' | 'exported';
 export type SaturationSource = 'measured' | 'estimated' | 'unknown';
+export type SignalValidationCode =
+  | 'program-overlap'
+  | 'invalid-program-time'
+  | 'invalid-program-cycle'
+  | 'invalid-program-phase'
+  | 'invalid-assignment-program'
+  | 'invalid-assignment-phase'
+  | 'invalid-effective-green';
 
 export type VerificationStatus = 'verified' | 'pending';
 
@@ -61,6 +69,13 @@ export interface SignalMovementAssignment {
   saturationFlowPerLane: number | null;
   saturationSource: SaturationSource;
   effectiveGreenSeconds: number | null;
+}
+
+export interface SignalValidationIssue {
+  code: SignalValidationCode;
+  message: string;
+  programId?: string;
+  assignmentId?: string;
 }
 
 export interface IntersectionConfig {
@@ -247,6 +262,7 @@ export interface StudySummary {
   queueByAccess: QueueAccessSummary[];
   cycleSummaries?: CycleObservationSummary[];
   signalGroupIndicators?: SignalGroupIndicator[];
+  signalValidationIssues?: SignalValidationIssue[];
   signalIndicators: SignalIndicators;
   completeRows: number;
   incompleteRows: number;

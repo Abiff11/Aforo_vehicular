@@ -51,6 +51,12 @@ function createPhaseTimings(count: number, cycleSeconds: number | null): SignalP
   }));
 }
 
+function addMinutesToClock(clock: string, minutes: number): string {
+  const [hours, minute] = clock.split(':').map(Number);
+  const total = ((hours * 60 + minute + minutes) % (24 * 60) + 24 * 60) % (24 * 60);
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+}
+
 export function createDefaultConfiguration(intersectionId: string, inherited = true): IntersectionConfig {
   return {
     intersectionId,
@@ -222,6 +228,69 @@ export function updateProgram(study: Study, programId: string, changes: Partial<
       programs: study.configurationSnapshot.programs.map((program) =>
         program.id === programId ? { ...program, ...changes } : program,
       ),
+    },
+  });
+}
+
+export function addSignalProgram(study: Study): Study {
+  const programs = study.configurationSnapshot.programs;
+  const nextNumber = programs.reduce((maximum, program) => {
+    const match = program.id.match(/^p(\d+)$/);
+    return match ? Math.max(maximum, Number(match[1])) : maximum;
+  }, 0) + 1;
+  const previous = programs.at(-1);
+  const startTime = previous?.endTime ?? study.metadata.startTime;
+  const program: SignalProgram = {
+    id: `p${nextNumber}`,
+    name: `P${nextNumber}`,
+    startTime,
+    endTime: addMinutesToClock(startTime, 60),
+    cycleSeconds: null,
+    phases: null,
+    greenSeconds: null,
+    amberSeconds: null,
+    redSeconds: null,
+    clearanceSeconds: null,
+    phaseTimings: [],
+    notes: '',
+  };
+
+  return withUpdatedAt({
+    ...study,
+    configurationSnapshot: {
+      ...study.configurationSnapshot,
+      inherited: false,
+      updatedAt: new Date().toISOString(),
+      programs: [...programs, program],
+    },
+  });
+}
+
+export function removeSignalProgram(study: Study, programId: string): Study {
+  const programs = study.configurationSnapshot.programs;
+  if (programs.length <= 1 || !programs.some((program) => program.id === programId)) return study;
+
+  const remainingPrograms = programs.filter((program) => program.id !== programId);
+  const fallback = remainingPrograms[0];
+  const assignments = (study.configurationSnapshot.signalMovementAssignments ?? []).map((assignment) =>
+    assignment.programId === programId
+      ? {
+          ...assignment,
+          programId: fallback.id,
+          phaseId: fallback.phaseTimings[0]?.id ?? '',
+          effectiveGreenSeconds: null,
+        }
+      : assignment,
+  );
+
+  return withUpdatedAt({
+    ...study,
+    configurationSnapshot: {
+      ...study.configurationSnapshot,
+      inherited: false,
+      updatedAt: new Date().toISOString(),
+      programs: remainingPrograms,
+      signalMovementAssignments: assignments,
     },
   });
 }

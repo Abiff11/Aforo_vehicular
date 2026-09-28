@@ -29,12 +29,19 @@ export function minutesFromClock(value: string): number {
   return parseTime(value);
 }
 
-export function generateIntervals(startTime: string, endTime: string, intervalMinutes: number): IntervalBlock[] {
-  const start = parseTime(startTime);
-  let end = parseTime(endTime);
+export function validateStudyPeriod(startTime: string, endTime: string, intervalMinutes: number): string | null {
+  let start: number;
+  let end: number;
+
+  try {
+    start = parseTime(startTime);
+    end = parseTime(endTime);
+  } catch (error) {
+    return error instanceof Error ? error.message : 'El horario del estudio es invalido.';
+  }
 
   if (!Number.isInteger(intervalMinutes) || intervalMinutes <= 0) {
-    throw new Error('El intervalo debe ser un numero entero mayor a cero.');
+    return 'El intervalo debe ser un numero entero mayor a cero.';
   }
 
   if (end <= start) {
@@ -43,12 +50,23 @@ export function generateIntervals(startTime: string, endTime: string, intervalMi
 
   const duration = end - start;
   if (duration > MINUTES_PER_DAY) {
-    throw new Error('La duracion del estudio no puede exceder 24 horas.');
+    return 'La duracion del estudio no puede exceder 24 horas.';
   }
 
   if (duration % intervalMinutes !== 0) {
-    throw new Error(`La duracion del estudio no puede dividirse exactamente en intervalos de ${intervalMinutes} minutos.`);
+    return `La duracion del estudio no puede dividirse exactamente en intervalos de ${intervalMinutes} minutos.`;
   }
+
+  return null;
+}
+
+export function generateIntervals(startTime: string, endTime: string, intervalMinutes: number): IntervalBlock[] {
+  const validationError = validateStudyPeriod(startTime, endTime, intervalMinutes);
+  if (validationError) throw new Error(validationError);
+
+  const start = parseTime(startTime);
+  let end = parseTime(endTime);
+  if (end <= start) end += MINUTES_PER_DAY;
 
   const intervals: IntervalBlock[] = [];
   for (let minute = start; minute < end; minute += intervalMinutes) {

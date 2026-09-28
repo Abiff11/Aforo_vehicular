@@ -6,6 +6,7 @@ import type {
   RowValidationResult,
   SignalMovementAssignment,
   SignalProgram,
+  SignalValidationIssue,
   StudySummary,
 } from './types';
 import { intervalsAreConsecutive, isOneHourCompatible, minutesFromClock } from './time';
@@ -58,31 +59,69 @@ function combineNotes(rows: CaptureRow[]): string {
   return Array.from(new Set(rows.map((row) => row.notes.trim()).filter(Boolean))).join(' | ');
 }
 
-function durationMinutes(start: string, end: string): number {
-  const startMinute = minutesFromClock(start);
-  const endMinute = minutesFromClock(end);
+function timeValidationError(value: string): string | null {
+  try {
+    minutesFromClock(value);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : 'La hora del programa es inválida.';
+  }
+}
+
+function programTimeIssue(program: SignalProgram): SignalValidationIssue | null {
+  const startError = timeValidationError(program.startTime);
+  const endError = timeValidationError(program.endTime);
+  const error = startError ?? endError;
+  return error
+    ? {
+        code: 'invalid-program-time',
+        programId: program.id,
+        message: `El programa ${program.name} tiene horario inválido: ${error}`,
+      }
+    : null;
+}
+
+function durationMinutes(start: string, end: string): number | null {
+  const startMinute = safeMinutesFromClock(start);
+  const endMinute = safeMinutesFromClock(end);
+  if (startMinute === null || endMinute === null) return null;
   const duration = (endMinute - startMinute + MINUTES_PER_DAY) % MINUTES_PER_DAY;
   return duration === 0 ? MINUTES_PER_DAY : duration;
 }
 
-function clockOffset(referenceStart: string, value: string): number {
-  return (minutesFromClock(value) - minutesFromClock(referenceStart) + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+function safeMinutesFromClock(value: string): number | null {
+  try {
+    return minutesFromClock(value);
+  } catch {
+    return null;
+  }
+}
+
+function clockOffset(referenceStart: string, value: string): number | null {
+  const valueMinute = safeMinutesFromClock(value);
+  const referenceMinute = safeMinutesFromClock(referenceStart);
+  if (valueMinute === null || referenceMinute === null) return null;
+  return (valueMinute - referenceMinute + MINUTES_PER_DAY) % MINUTES_PER_DAY;
 }
 
 function programContainsInterval(program: SignalProgram, start: string, end: string): boolean {
   const programDuration = durationMinutes(program.startTime, program.endTime);
   const intervalDuration = durationMinutes(start, end);
   const intervalOffset = clockOffset(program.startTime, start);
+  if (programDuration === null || intervalDuration === null || intervalOffset === null) return false;
   return intervalOffset < programDuration && intervalOffset + intervalDuration <= programDuration;
 }
 
+function programActiveAtMinute(program: SignalProgram, minute: number): boolean {
+  const start = safeMinutesFromClock(program.startTime);
+  const duration = durationMinutes(program.startTime, program.endTime);
+  if (start === null || duration === null) return false;
+  const offset = (minute - start + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+  return offset < duration;
+}
+
 function programAtMinute(programs: SignalProgram[], minute: number): SignalProgram | null {
-  return programs.find((program) => {
-    const start = minutesFromClock(program.startTime);
-    const duration = durationMinutes(program.startTime, program.endTime);
-    const offset = (minute - start + MINUTES_PER_DAY) % MINUTES_PER_DAY;
-    return offset < duration;
-  }) ?? null;
+  return programs.find((program) => programActiveAtMinute(program, minute)) ?? null;
 }
 
 export function resolveProgramForInterval(
@@ -93,8 +132,9 @@ export function resolveProgramForInterval(
   const contained = programs.find((program) => programContainsInterval(program, intervalStart, intervalEnd));
   if (contained) return { program: contained, crossesProgramChange: false };
 
-  const startMinute = minutesFromClock(intervalStart);
+  const startMinute = safeMinutesFromClock(intervalStart);
   const intervalDuration = durationMinutes(intervalStart, intervalEnd);
+  if (startMinute === null || intervalDuration === null) return { program: null, crossesProgramChange: false };
   const lastMinute = (startMinute + Math.max(0, intervalDuration - 1)) % MINUTES_PER_DAY;
   const startProgram = programAtMinute(programs, startMinute);
   const endProgram = programAtMinute(programs, lastMinute);
@@ -102,6 +142,94 @@ export function resolveProgramForInterval(
     program: null,
     crossesProgramChange: Boolean(startProgram && endProgram && startProgram.id !== endProgram.id),
   };
+}
+
+export function validateSignalConfiguration(
+  programs: SignalProgram[],
+  assignments: SignalMovementAssignment[],
+): SignalValidationIssue[] {
+  const validationIssues: SignalValidationIssue[] = [];
+  const invalidProgramTimeIds = new Set<string>();
+
+  for (let leftIndex = 0; leftIndex < programs.length; leftIndex += 1) {
+    const left = programs[leftIndex];
+    const leftTimeIssue = programTimeIssue(left);
+    if (leftTimeIssue) {
+      validationIssues.push(leftTimeIssue);
+      invalidProgramTimeIds.add(left.id);
+    }
+    if (left.cycleSeconds !== null && (!Number.isFinite(left.cycleSeconds) || left.cycleSeconds <= 0)) {
+      validationIssues.push({
+        code: 'invalid-program-cycle',
+        programId: left.id,
+        message: `El programa ${left.name} debe tener un ciclo mayor que cero.`,
+      });
+    }
+
+    for (let rightIndex = leftIndex + 1; rightIndex < programs.length; rightIndex += 1) {
+      const right = programs[rightIndex];
+      const rightTimeIssue = programTimeIssue(right);
+      if (rightTimeIssue && !invalidProgramTimeIds.has(right.id)) {
+        validationIssues.push(rightTimeIssue);
+        invalidProgramTimeIds.add(right.id);
+      }
+      if (invalidProgramTimeIds.has(left.id) || invalidProgramTimeIds.has(right.id)) continue;
+      const overlaps = Array.from({ length: MINUTES_PER_DAY }, (_, minute) => minute).some(
+        (minute) => programActiveAtMinute(left, minute) && programActiveAtMinute(right, minute),
+      );
+      if (overlaps) {
+        validationIssues.push({
+          code: 'program-overlap',
+          programId: left.id,
+          message: `Los programas ${left.name} y ${right.name} se traslapan.`,
+        });
+      }
+    }
+  }
+
+  for (const assignment of assignments) {
+    const program = programs.find((item) => item.id === assignment.programId);
+    if (!program) {
+      validationIssues.push({
+        code: 'invalid-assignment-program',
+        assignmentId: assignment.id,
+        message: `El grupo ${assignment.id} referencia un programa inexistente.`,
+      });
+      continue;
+    }
+
+    const phase = program.phaseTimings.find((item) => item.id === assignment.phaseId);
+    if (!phase) {
+      validationIssues.push({
+        code: 'invalid-assignment-phase',
+        programId: program.id,
+        assignmentId: assignment.id,
+        message: `El grupo ${assignment.id} no tiene una fase válida en ${program.name}.`,
+      });
+    }
+
+    const cycleSeconds =
+      typeof phase?.cycleSeconds === 'number' && phase.cycleSeconds > 0
+        ? phase.cycleSeconds
+        : typeof program.cycleSeconds === 'number' && program.cycleSeconds > 0
+          ? program.cycleSeconds
+          : null;
+    if (
+      assignment.effectiveGreenSeconds !== null &&
+      (!Number.isFinite(assignment.effectiveGreenSeconds) ||
+        assignment.effectiveGreenSeconds <= 0 ||
+        (cycleSeconds !== null && assignment.effectiveGreenSeconds > cycleSeconds))
+    ) {
+      validationIssues.push({
+        code: 'invalid-effective-green',
+        programId: program.id,
+        assignmentId: assignment.id,
+        message: `El verde efectivo del grupo ${assignment.id} debe ser mayor que cero y no superar el ciclo.`,
+      });
+    }
+  }
+
+  return validationIssues;
 }
 
 export function calculateRowMotorizedTotal(row: CaptureRow, access: AccessConfig): number {
@@ -203,6 +331,8 @@ export function calculateStudySummary(
 ): StudySummary {
   const programs = signalInput.programs ?? [];
   const assignments = signalInput.assignments ?? [];
+  const signalValidationIssues = validateSignalConfiguration(programs, assignments);
+  const hasProgramOverlap = signalValidationIssues.some((issue) => issue.code === 'program-overlap');
   const accessById = new Map(accesses.map((access) => [access.id, access]));
   const fallbackAccess = accesses[0];
   const rowValidation = rows.map((row) => {
@@ -257,6 +387,9 @@ export function calculateStudySummary(
 
   const totalMotorized = rows.reduce((total, row) => total + totalForRow(row), 0);
   const validIntervals = byInterval.filter((item) => item.complete);
+  const validIntervalIds = new Set(validIntervals.map((item) => item.intervalId));
+  const chartRows = rows.filter((row) => validIntervalIds.has(row.intervalId));
+  const chartMotorizedTotal = chartRows.reduce((total, row) => total + totalForRow(row), 0);
   const peakInterval = validIntervals.reduce<{ label: string; volume: number } | null>((best, item) => {
     if (!best || item.total > best.volume) return { label: item.label, volume: item.total };
     return best;
@@ -300,12 +433,12 @@ export function calculateStudySummary(
   const byAccess = accesses.map((access) => ({
     accessId: access.id,
     accessName: access.name,
-    volume: rows.filter((row) => row.accessId === access.id).reduce((total, row) => total + totalForRow(row), 0),
+    volume: chartRows.filter((row) => row.accessId === access.id).reduce((total, row) => total + totalForRow(row), 0),
   }));
 
   const byMovement = movementKeys.map((key) => {
-    const volume = rows.reduce((total, row) => total + movementValueForRow(row, key), 0);
-    return { movement: movementLabels[key], volume, percent: totalMotorized > 0 ? (volume / totalMotorized) * 100 : 0 };
+    const volume = chartRows.reduce((total, row) => total + movementValueForRow(row, key), 0);
+    return { movement: movementLabels[key], volume, percent: chartMotorizedTotal > 0 ? (volume / chartMotorizedTotal) * 100 : 0 };
   });
 
   const queueByAccess = accesses.map((access) => {
@@ -359,7 +492,7 @@ export function calculateStudySummary(
           ? program.cycleSeconds
           : null;
     const effectiveGreenSeconds =
-      typeof assignment.effectiveGreenSeconds === 'number' && assignment.effectiveGreenSeconds >= 0
+      typeof assignment.effectiveGreenSeconds === 'number' && assignment.effectiveGreenSeconds > 0
         ? assignment.effectiveGreenSeconds
         : null;
     const lanes = typeof assignment.lanes === 'number' && assignment.lanes > 0 ? assignment.lanes : null;
@@ -382,8 +515,13 @@ export function calculateStudySummary(
         const resolution = intervalProgramResolution.get(intervalId);
         return !resolution?.crossesProgramChange && resolution?.program?.id === assignment.programId;
       });
+    const assignmentHasValidationIssue = signalValidationIssues.some(
+      (issue) => issue.assignmentId === assignment.id || (issue.programId === assignment.programId && issue.code !== 'program-overlap'),
+    );
     const formalInputsValid =
       Boolean(access && phase && peakProgramsValid) &&
+      !hasProgramOverlap &&
+      !assignmentHasValidationIssue &&
       cycleSeconds !== null &&
       effectiveGreenSeconds !== null &&
       effectiveGreenSeconds <= cycleSeconds &&
@@ -427,13 +565,14 @@ export function calculateStudySummary(
     totalPedestrians: rows.reduce((total, row) => total + valueOrZero(row.pedestrians), 0),
     peakInterval,
     peakHour,
-    averageIntervalVolume: byInterval.length > 0 ? totalMotorized / byInterval.length : 0,
+    averageIntervalVolume: validIntervals.length > 0 ? chartMotorizedTotal / validIntervals.length : 0,
     byInterval,
     byAccess,
     byMovement,
     queueByAccess,
     cycleSummaries,
     signalGroupIndicators,
+    signalValidationIssues,
     signalIndicators: {
       peakHourFlow,
       cycleSeconds: null,
@@ -461,6 +600,6 @@ export function calculateStudySummary(
         : `${validFormalGroups}/${assignments.length} grupos con capacidad y v/c formal calculables.`,
     ],
     issues,
-    warnings: Array.from(new Set(warnings)),
+    warnings: Array.from(new Set([...warnings, ...signalValidationIssues.map((issue) => issue.message)])),
   };
 }

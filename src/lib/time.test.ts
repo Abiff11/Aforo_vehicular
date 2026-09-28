@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { generateIntervals } from './time';
+import { generateIntervals, validateStudyPeriod } from './time';
 
 describe('generateIntervals', () => {
   it('creates contiguous 15 minute labels for a valid study window', () => {
@@ -26,5 +26,15 @@ describe('generateIntervals', () => {
       { id: '00:30-00:45', start: '00:30', end: '00:45', label: '00:30-00:45' },
       { id: '00:45-01:00', start: '00:45', end: '01:00', label: '00:45-01:00' },
     ]);
+  });
+
+  it('reports a period that cannot be divided by its selected interval', () => {
+    expect(validateStudyPeriod('07:00', '07:07', 15)).toBe(
+      'La duracion del estudio no puede dividirse exactamente en intervalos de 15 minutos.',
+    );
+  });
+
+  it('accepts a period that crosses midnight', () => {
+    expect(validateStudyPeriod('23:30', '01:00', 15)).toBeNull();
   });
 });

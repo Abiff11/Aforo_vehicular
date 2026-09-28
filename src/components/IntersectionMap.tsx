@@ -98,11 +98,11 @@ export function IntersectionMap({ intersections, selectedIntersectionId, onSelec
       const selected = intersection.id === selectedIntersectionId;
       const marker = L.marker([intersection.latitude, intersection.longitude], {
         icon: createMarkerIcon(intersection, selected),
-        title: `${intersection.id} ${intersection.name}`,
+        title: `${intersection.mapNumber}. ${intersection.name}`,
         keyboard: true,
       });
 
-      marker.bindTooltip(`${intersection.id} ${intersection.name}`);
+      marker.bindTooltip(`${intersection.mapNumber}. ${intersection.name}`);
       marker.on('click', () => onSelect(intersection.id));
       marker.addTo(markerLayer);
     });
@@ -119,15 +119,25 @@ export function IntersectionMap({ intersections, selectedIntersectionId, onSelec
   }
 
   return (
-    <section aria-label="Mapa real de intersecciones de Oaxaca" className="real-map">
-      <button
-        className="secondary"
-        onClick={createAtCenter}
-        style={{ position: 'absolute', left: 12, top: 12, zIndex: 1000 }}
-        type="button"
-      >
-        Crear marcador en el centro del mapa
-      </button>
+    <section
+      aria-describedby="map-interaction-help"
+      aria-label="Mapa real de intersecciones de Oaxaca"
+      className="real-map map-shell"
+    >
+      <p className="sr-only" id="map-interaction-help">
+        Seleccione una intersección existente o haga clic en cualquier punto del mapa para crear un nuevo estudio.
+      </p>
+      <div aria-label="Acciones del mapa" className="map-toolbar" role="group">
+        <button
+          aria-label="Crear una intersección en el centro visible del mapa"
+          className="secondary map-create-button"
+          onClick={createAtCenter}
+          title="Crear una intersección en el centro visible"
+          type="button"
+        >
+          Crear marcador en el centro del mapa
+        </button>
+      </div>
       <div className="leaflet-map" ref={mapElementRef} />
     </section>
   );
