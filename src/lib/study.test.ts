@@ -139,6 +139,21 @@ describe('study configuration editing', () => {
     expect(removed.configurationSnapshot.signalMovementAssignments).toEqual([]);
   });
 
+  it('invalidates validated or exported status when calculation configuration changes', () => {
+    const validated = { ...createDefaultStudy('INT-002'), status: 'validated' as const };
+    expect(updateAccessConfig(validated, 'north', { lanes: 3 }).status).toBe('draft');
+    expect(updateAccessMovement(validated, 'north', 'uTurn', true).status).toBe('draft');
+    expect(updateProgram(validated, 'p1', { cycleSeconds: 90 }).status).toBe('draft');
+    expect(updateProgramPhaseCount(validated, 'p1', 1).status).toBe('draft');
+
+    const withPhase = updateProgramPhaseCount(createDefaultStudy('INT-002'), 'p1', 1);
+    const withGroup = addSignalMovementAssignment(withPhase);
+    const assignment = withGroup.configurationSnapshot.signalMovementAssignments![0];
+    const exported = { ...withGroup, status: 'exported' as const };
+    expect(updateSignalMovementAssignment(exported, assignment.id, { effectiveGreenSeconds: 40 }).status).toBe('draft');
+    expect(removeSignalMovementAssignment(exported, assignment.id).status).toBe('draft');
+  });
+
   it('validates only complete observed studies and does not let export hide an incomplete state', () => {
     const observed = createDefaultStudy('INT-002');
     expect(validateStudy(observed, false).status).toBe('incomplete');
