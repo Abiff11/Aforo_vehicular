@@ -4,12 +4,15 @@ import { createInitialState, STORAGE_KEY } from '../lib/storage';
 import { createDefaultStudy } from '../lib/study';
 import { WizardApp } from './WizardApp';
 
+const mapCreateButtonName = 'Crear una intersección en el centro visible del mapa';
+const firstMapMarkerName = /1\. Interseccion 001/;
+
 function goToIntersectionStep() {
   fireEvent.click(screen.getByRole('button', { name: /^2\s*Interseccion$/ }));
 }
 
 function createIntersection() {
-  fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
+  fireEvent.click(screen.getByRole('button', { name: mapCreateButtonName }));
 }
 
 describe('WizardApp study configuration isolation', () => {
@@ -36,7 +39,7 @@ describe('WizardApp study configuration isolation', () => {
 
     goToIntersectionStep();
     const map = screen.getByRole('region', { name: 'Mapa real de intersecciones de Oaxaca' });
-    fireEvent.click(within(map).getByRole('button', { name: /INT-001 Interseccion 001/ }));
+    fireEvent.click(within(map).getByRole('button', { name: firstMapMarkerName }));
     fireEvent.click(screen.getByRole('button', { name: /^3\s*Configuracion$/ }));
 
     expect(screen.getByDisplayValue('Acceso exclusivo INT-001')).toBeInTheDocument();

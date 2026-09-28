@@ -6,6 +6,9 @@ import { WizardApp } from './WizardApp';
 const roadTrafficCsv = `CARRETERA,"CLAVE CARRETERA",RUTA,"PUNTO GENERADOR",KM,TIPO,SC,TDPA2024,M,A,B,C2,C3,T3S2,T3S3,T3S2R4,OTROS,AUTOS,AUTOBUSES,CAMIONES,D,K',LAT,LONG
 "Huajuapan de León - Oaxaca",20056,MEX-190,"T. Aut. Cuacnopalan - Oaxaca",181.8,3,1,24977,10.6,80.5,2,3.1,1.2,0.9,0.5,0.8,0.4,91.1,2,6.9,0.511,0.076,17.139925,-96.776604
 `;
+const mapCreateButtonName = 'Crear una intersección en el centro visible del mapa';
+const firstMapMarkerName = /1\. Interseccion 001/;
+const secondMapMarkerName = /2\. Interseccion 002/;
 
 describe('WizardApp ficha aforo capture flow', () => {
   beforeEach(() => {
@@ -23,7 +26,7 @@ describe('WizardApp ficha aforo capture flow', () => {
   function renderWithIntersection() {
     render(<WizardApp />);
     goToIntersectionStep();
-    fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
+    fireEvent.click(screen.getByRole('button', { name: mapCreateButtonName }));
   }
 
   it('starts with only general study metadata before the intersection step', () => {
@@ -50,14 +53,14 @@ describe('WizardApp ficha aforo capture flow', () => {
     render(<WizardApp />);
     fireEvent.change(screen.getByLabelText('Aforador'), { target: { value: 'Hiram' } });
     goToIntersectionStep();
-    fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
+    fireEvent.click(screen.getByRole('button', { name: mapCreateButtonName }));
     fireEvent.click(screen.getByRole('button', { name: /^3\s*Configuracion$/ }));
     fireEvent.change(screen.getByDisplayValue('Norte'), { target: { value: 'Acceso A personalizado' } });
 
     fireEvent.click(screen.getByRole('button', { name: /^2\s*Interseccion$/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
+    fireEvent.click(screen.getByRole('button', { name: mapCreateButtonName }));
     const map = screen.getByRole('region', { name: 'Mapa real de intersecciones de Oaxaca' });
-    fireEvent.click(within(map).getByRole('button', { name: /INT-001 Interseccion 001/ }));
+    fireEvent.click(within(map).getByRole('button', { name: firstMapMarkerName }));
     fireEvent.click(screen.getByRole('button', { name: /^3\s*Configuracion$/ }));
     expect(screen.getByDisplayValue('Acceso A personalizado')).toBeInTheDocument();
 
@@ -70,9 +73,9 @@ describe('WizardApp ficha aforo capture flow', () => {
     goToIntersectionStep();
     const map = screen.getByRole('region', { name: 'Mapa real de intersecciones de Oaxaca' });
     expect(within(map).queryByRole('button', { name: /INT-\d{3}/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
+    fireEvent.click(screen.getByRole('button', { name: mapCreateButtonName }));
     expect(screen.getByRole('heading', { name: 'INT-001' })).toBeInTheDocument();
-    expect(within(map).getByRole('button', { name: /INT-001 Interseccion 001/ })).toBeInTheDocument();
+    expect(within(map).getByRole('button', { name: firstMapMarkerName })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Limpiar campos' })).toBeInTheDocument();
   });
 
@@ -81,13 +84,13 @@ describe('WizardApp ficha aforo capture flow', () => {
     render(<WizardApp />);
     fireEvent.change(screen.getByLabelText('Aforador'), { target: { value: 'Aforador persistente' } });
     goToIntersectionStep();
-    fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
+    fireEvent.click(screen.getByRole('button', { name: mapCreateButtonName }));
+    fireEvent.click(screen.getByRole('button', { name: mapCreateButtonName }));
     const map = screen.getByRole('region', { name: 'Mapa real de intersecciones de Oaxaca' });
-    fireEvent.click(within(map).getByRole('button', { name: /INT-001 Interseccion 001/ }));
+    fireEvent.click(within(map).getByRole('button', { name: firstMapMarkerName }));
     fireEvent.change(screen.getByLabelText('Nombre'), { target: { value: 'Cruce temporal' } });
     fireEvent.click(screen.getByRole('button', { name: 'Limpiar campos' }));
-    expect(within(map).getByRole('button', { name: /INT-002 Interseccion 002/ })).toBeInTheDocument();
+    expect(within(map).getByRole('button', { name: secondMapMarkerName })).toBeInTheDocument();
     expect(screen.getByLabelText('Nombre')).toHaveValue('');
     fireEvent.click(screen.getByRole('button', { name: /^1\s*Estudio$/ }));
     expect(screen.getByLabelText('Aforador')).toHaveValue('Aforador persistente');
@@ -98,7 +101,7 @@ describe('WizardApp ficha aforo capture flow', () => {
     render(<WizardApp />);
     fireEvent.change(screen.getByLabelText('Aforador'), { target: { value: 'Se borrará' } });
     goToIntersectionStep();
-    fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
+    fireEvent.click(screen.getByRole('button', { name: mapCreateButtonName }));
     fireEvent.click(screen.getByRole('button', { name: /^1\s*Estudio$/ }));
     expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Limpiar estudio' }));
@@ -302,9 +305,9 @@ describe('WizardApp ficha aforo capture flow', () => {
   it('links one or more intersections created from the map', () => {
     renderWithIntersection();
     fireEvent.click(screen.getByRole('button', { name: /^2\s*Interseccion$/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Crear marcador en el centro del mapa' }));
+    fireEvent.click(screen.getByRole('button', { name: mapCreateButtonName }));
     const map = screen.getByRole('region', { name: 'Mapa real de intersecciones de Oaxaca' });
-    fireEvent.click(within(map).getByRole('button', { name: /INT-001 Interseccion 001/ }));
+    fireEvent.click(within(map).getByRole('button', { name: firstMapMarkerName }));
     const card = screen.getByRole('complementary');
     fireEvent.click(within(card).getByRole('checkbox', { name: /INT-002 Interseccion 002/ }));
     expect(within(card).getByText('1 vinculadas')).toBeInTheDocument();
