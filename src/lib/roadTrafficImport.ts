@@ -578,6 +578,7 @@ function applyRoadTrafficEstimate(study: Study, record: RoadTrafficRecord): Stud
     ...study,
     source: preserveObservedSource ? 'observed' : 'estimated_tdpa',
     tdpaEstimate: createTdpaEstimate(record),
+    tdpaGeneratedAt: null,
     status,
     metadata: {
       ...study.metadata,
