@@ -36,9 +36,10 @@ const temporalLabels = [
 interface TdpaCorridorSettingsPanelProps {
   study: Study;
   onChange: Dispatch<TdpaCorridorSettingsWithTemporal>;
+  onApplyToCorridor?: () => void;
 }
 
-export function TdpaCorridorSettingsPanel({ study, onChange }: TdpaCorridorSettingsPanelProps) {
+export function TdpaCorridorSettingsPanel({ study, onChange, onApplyToCorridor }: TdpaCorridorSettingsPanelProps) {
   const settings = resolveTdpaCorridorSettings(study);
   const accesses = study.configurationSnapshot.accesses;
   const directionIssue = getTdpaDirectionIssue(settings);
@@ -116,7 +117,18 @@ export function TdpaCorridorSettingsPanel({ study, onChange }: TdpaCorridorSetti
             Seleccione los dos accesos que representan la carretera y ajuste la distribución de giros. Cada acceso debe sumar exactamente 100% antes de generar el aforo estimado.
           </p>
         </div>
+        {onApplyToCorridor && (
+          <button className="secondary" onClick={onApplyToCorridor} type="button">
+            Aplicar configuración TDPA al corredor
+          </button>
+        )}
       </div>
+
+      {onApplyToCorridor && (
+        <p className="section-description">
+          Usa esta configuración como base para las intersecciones vinculadas del tramo. Después podrás ajustar cada cruce de forma independiente sin modificar los demás.
+        </p>
+      )}
 
       <div aria-label="Guía de configuración TDPA" style={{ borderLeft: '3px solid var(--navy-600)', marginBottom: 18, padding: '2px 0 2px 12px' }}>
         <p style={{ marginBottom: 6 }}><strong>Qué vas a hacer:</strong> identificar por qué accesos entra el flujo del corredor y cómo se reparte entre izquierda, frente, derecha y retorno.</p>

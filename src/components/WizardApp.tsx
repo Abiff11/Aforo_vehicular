@@ -21,6 +21,7 @@ import {
   validateTdpaIntersectionEstimate,
 } from '../lib/roadTrafficImport';
 import { createRoadTrafficCorridorStudies } from '../lib/roadTrafficCorridorGeneration';
+import { applyTdpaSettingsToCorridorStudies } from '../lib/tdpaCorridorDefaults';
 import {
   addSignalMovementAssignment,
   addSignalProgram,
@@ -595,6 +596,22 @@ export function WizardApp() {
     });
   }
 
+  function applyTdpaSettingsToCorridor(): void {
+    if (!selectedIntersection || !tdpaSettings) return;
+    const nextStudies = applyTdpaSettingsToCorridorStudies(
+      { ...studiesByIntersection, [activeStudy.intersectionId]: activeStudy },
+      customIntersections,
+      selectedIntersection.id,
+      tdpaSettings,
+    );
+    const nextActiveStudy = nextStudies[activeStudy.intersectionId] ?? activeStudy;
+    persist({
+      ...state,
+      activeStudy: nextActiveStudy,
+      studiesByIntersection: nextStudies,
+    });
+  }
+
   function toggleMovement(accessId: string, movement: MovementKey): void {
     const access = activeStudy.configurationSnapshot.accesses.find((candidate) => candidate.id === accessId);
     if (!access) return;
@@ -912,6 +929,7 @@ export function WizardApp() {
                 status: activeStudy.status === 'validated' || activeStudy.status === 'exported' ? 'draft' : activeStudy.status,
                 updatedAt: new Date().toISOString(),
               })}
+              onApplyToCorridor={isGuidedTdpaStudy ? applyTdpaSettingsToCorridor : undefined}
             />
 
             <section className="panel">
