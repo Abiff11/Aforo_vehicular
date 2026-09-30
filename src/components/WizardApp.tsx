@@ -17,10 +17,10 @@ import { calculateRowMotorizedTotal, calculateStudySummary } from '../lib/calcul
 import { downloadStudyWorkbook } from '../lib/exportExcel';
 import {
   calculateRoadTrafficProfile,
-  createTrafficStudyForIntersection,
   parseRoadTrafficCsv,
   validateTdpaIntersectionEstimate,
 } from '../lib/roadTrafficImport';
+import { createRoadTrafficCorridorStudies } from '../lib/roadTrafficCorridorGeneration';
 import {
   addSignalMovementAssignment,
   addSignalProgram,
@@ -494,30 +494,59 @@ export function WizardApp() {
     if (!file || !selectedIntersection) return;
 
     try {
-      const [record] = parseRoadTrafficCsv(await readFileText(file));
-      if (!record) throw new Error('El CSV no contiene registros de TDPA.');
+      const records = parseRoadTrafficCsv(await readFileText(file));
+      if (records.length === 0) throw new Error('El CSV no contiene registros de TDPA.');
 
-      const linkedIntersection = { ...selectedIntersection, linkedCsvFileName: file.name };
-      const imported = createTrafficStudyForIntersection(record, linkedIntersection, activeStudy);
-      const guidedStudy = { ...imported.study, currentStep: 1 };
-      const guidedImport = { ...imported, study: guidedStudy };
-      const nextIntersections = customIntersections.map((intersection) =>
-        intersection.id === linkedIntersection.id ? linkedIntersection : intersection,
+      const existingStudies = {
+        ...studiesByIntersection,
+        [activeStudy.intersectionId]: activeStudy,
+      };
+      const generated = createRoadTrafficCorridorStudies(
+        records,
+        customIntersections,
+        selectedIntersection.id,
+        existingStudies,
       );
+      const affectedIds = new Set(generated.analysis.intersections.map((intersection) => intersection.id));
+      const nextIntersections = customIntersections.map((intersection) =>
+        affectedIds.has(intersection.id)
+          ? { ...intersection, linkedCsvFileName: file.name }
+          : intersection,
+      );
+      const nextIntersectionById = new Map(nextIntersections.map((intersection) => [intersection.id, intersection]));
+      const guidedImports = generated.studies.map(({ intersection, study }) => ({
+        intersection: nextIntersectionById.get(intersection.id) ?? intersection,
+        study: {
+          ...study,
+          currentStep: 1,
+          relatedIntersectionIds: intersection.relatedIntersectionIds ?? study.relatedIntersectionIds,
+        },
+      }));
+      const nextStudies = { ...studiesByIntersection };
+      guidedImports.forEach(({ study }) => {
+        nextStudies[study.intersectionId] = study;
+      });
+      const activeImport = guidedImports.find(({ study }) => study.intersectionId === selectedIntersection.id);
+      const activeAssignment = generated.analysis.assignments.find(
+        ({ intersection }) => intersection.id === selectedIntersection.id,
+      );
+      if (!activeImport || !activeAssignment) {
+        throw new Error('No fue posible asignar un registro TDPA a la intersección activa.');
+      }
 
       setRoadTrafficImport({
         fileName: file.name,
-        corridorName: linkedIntersection.name,
-        point: record.point,
-        profile: calculateRoadTrafficProfile(record),
-        studies: [guidedImport],
+        corridorName: generated.analysis.corridorName,
+        point: activeAssignment.record.point,
+        profile: calculateRoadTrafficProfile(activeAssignment.record),
+        studies: guidedImports,
       });
       setRoadTrafficImportError(null);
       persist({
         ...state,
         customIntersections: nextIntersections,
-        activeStudy: guidedStudy,
-        studiesByIntersection: { ...studiesByIntersection, [linkedIntersection.id]: guidedStudy },
+        activeStudy: activeImport.study,
+        studiesByIntersection: nextStudies,
       });
     } catch (error) {
       setRoadTrafficImport(null);
@@ -734,7 +763,7 @@ export function WizardApp() {
           <section aria-labelledby="help-title" className="help-modal" role="dialog" onClick={(event) => event.stopPropagation()}>
             <div className="help-header">
               <div><p className="eyebrow">Tutorial del paso</p><h2 id="help-title">{activeHelp.helpTitle}</h2></div>
-              <button aria-label="Cerrar ayuda" className="icon-button" onClick={() => setHelpStepIndex(null)} title="Cerrar ayuda" type="button"><X size={20} /></button>
+              <button aria-label={`Cerrar ayuda`} className="icon-button" onClick={() => setHelpStepIndex(null)} title="Cerrar ayuda" type="button"><X size={20} /></button>
             </div>
             <p>{activeHelp.helpBody}</p>
             <ol className="help-list">{activeHelp.helpChecklist.map((item) => <li key={item}>{item}</li>)}</ol>
@@ -835,7 +864,13 @@ export function WizardApp() {
                       style={{ display: 'block', marginTop: 12 }}
                     >
                       <strong>CSV TDPA vinculado. No se saltará ninguna etapa.</strong>
-                      <p><strong>Qué ocurrió:</strong> el sistema reconoció el registro TDPA y lo vinculó a esta intersección como fuente de estimación, no como conteo observado.</p>
+                      {roadTrafficImport && (
+                        <>
+                          <p>{roadTrafficImport.studies.length} intersecciones del corredor preparadas con TDPA.</p>
+                          <p><strong>Corredor:</strong> {roadTrafficImport.corridorName}. <strong>Punto activo:</strong> {roadTrafficImport.point}.</p>
+                        </>
+                      )}
+                      <p><strong>Qué ocurrió:</strong> el sistema reconoció los registros TDPA compatibles y los vinculó a las intersecciones relacionadas del corredor como fuente de estimación, sin reemplazar aforos observados existentes.</p>
                       <p><strong>Antes de continuar:</strong> verifica el punto, el nombre del cruce y las intersecciones relacionadas que forman parte del mismo tramo.</p>
                       <p><strong>Ahora continúa a Configuración:</strong> allí definirás accesos, sentidos del corredor y el reparto de giros que permitirá transformar el volumen TDPA en una estimación por movimiento.</p>
                       <small>Los intervalos de aforo todavía no se rellenan en este paso.</small>
@@ -1352,7 +1387,7 @@ export function WizardApp() {
             {roadTrafficImport && (
               <div className="panel import-result-panel">
                 <strong>{roadTrafficImport.point}</strong>
-                <p>CSV TDPA vinculado exclusivamente a {roadTrafficImport.corridorName} como estimación de planeación.</p>
+                <p>CSV TDPA aplicado al corredor {roadTrafficImport.corridorName} como estimación de planeación para {roadTrafficImport.studies.length} intersecciones.</p>
               </div>
             )}
             <ResultsDashboard
