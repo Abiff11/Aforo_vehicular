@@ -72,4 +72,31 @@ describe('WizardApp TDPA corridor configuration', () => {
     fireEvent.pointerDown(document.body);
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
   });
+
+  it('requires an explicit TDPA temporal assumption and persists the selected profile', () => {
+    render(<WizardApp />);
+    openTdpaConfiguration();
+
+    expect(screen.getByRole('region', { name: 'Perfil temporal TDPA' })).toHaveTextContent(
+      'El CSV TDPA no contiene una distribución cada 15 minutos',
+    );
+    expect(screen.getByText('Perfil temporal: pendiente · Selecciona un supuesto o captura porcentajes')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Usar uniforme 25/25/25/25' }));
+
+    expect(screen.getByLabelText('Porcentaje intervalo TDPA 1')).toHaveValue(25);
+    expect(screen.getByLabelText('Porcentaje intervalo TDPA 2')).toHaveValue(25);
+    expect(screen.getByLabelText('Porcentaje intervalo TDPA 3')).toHaveValue(25);
+    expect(screen.getByLabelText('Porcentaje intervalo TDPA 4')).toHaveValue(25);
+    expect(screen.getByText('Perfil temporal: 100% · Listo para generar')).toBeInTheDocument();
+
+    let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+    expect(saved.activeStudy.tdpaCorridorSettings.temporalDistribution).toEqual([25, 25, 25, 25]);
+
+    fireEvent.change(screen.getByLabelText('Porcentaje intervalo TDPA 2'), { target: { value: '30' } });
+    expect(screen.getByText('Perfil temporal: 105% · Excede 100% por 5%')).toBeInTheDocument();
+
+    saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+    expect(saved.activeStudy.tdpaCorridorSettings.temporalDistribution).toEqual([25, 30, 25, 25]);
+  });
 });

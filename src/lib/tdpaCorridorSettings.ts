@@ -1,4 +1,9 @@
 import { DEFAULT_MOVEMENT_DISTRIBUTION, validateMovementDistribution } from './roadTrafficImport';
+import {
+  UNIFORM_TDPA_TEMPORAL_DISTRIBUTION,
+  validateTdpaTemporalDistribution,
+  type TdpaTemporalDistribution,
+} from './tdpaTemporalProfile';
 import type {
   AccessConfig,
   MovementKey,
@@ -9,6 +14,12 @@ import type {
 
 const MOVEMENT_KEYS: MovementKey[] = ['left', 'through', 'right', 'uTurn'];
 const PERCENT_TOLERANCE = 1e-9;
+
+type TdpaTemporalIndex = 0 | 1 | 2 | 3;
+
+export interface TdpaCorridorSettingsWithTemporal extends TdpaCorridorSettings {
+  temporalDistribution?: TdpaTemporalDistribution | null;
+}
 
 function createDefaultDistribution(access: AccessConfig): TdpaMovementDistribution {
   const distribution: TdpaMovementDistribution = { ...DEFAULT_MOVEMENT_DISTRIBUTION };
@@ -36,9 +47,9 @@ function normalizeStoredDistribution(
   return distribution;
 }
 
-export function resolveTdpaCorridorSettings(study: Study): TdpaCorridorSettings {
+export function resolveTdpaCorridorSettings(study: Study): TdpaCorridorSettingsWithTemporal {
   const accesses = study.configurationSnapshot.accesses;
-  const stored = study.tdpaCorridorSettings;
+  const stored = study.tdpaCorridorSettings as TdpaCorridorSettingsWithTemporal | null | undefined;
   const accessIds = new Set(accesses.map((access) => access.id));
   const mainDirectionAccessId = stored && accessIds.has(stored.mainDirectionAccessId)
     ? stored.mainDirectionAccessId
@@ -63,6 +74,7 @@ export function resolveTdpaCorridorSettings(study: Study): TdpaCorridorSettings 
     mainDirectionAccessId,
     oppositeDirectionAccessId,
     movementDistributionByAccess,
+    temporalDistribution: stored?.temporalDistribution ?? null,
   };
 }
 
@@ -71,7 +83,7 @@ export function updateTdpaMovementPercentage(
   accessId: string,
   movement: MovementKey,
   value: number,
-): TdpaCorridorSettings {
+): TdpaCorridorSettingsWithTemporal {
   const settings = resolveTdpaCorridorSettings(study);
   return {
     ...settings,
@@ -82,6 +94,31 @@ export function updateTdpaMovementPercentage(
         [movement]: value,
       },
     },
+  };
+}
+
+export function applyUniformTdpaTemporalDistribution(study: Study): TdpaCorridorSettingsWithTemporal {
+  const settings = resolveTdpaCorridorSettings(study);
+  return {
+    ...settings,
+    temporalDistribution: [...UNIFORM_TDPA_TEMPORAL_DISTRIBUTION] as [number, number, number, number],
+  };
+}
+
+export function updateTdpaTemporalPercentage(
+  study: Study,
+  index: TdpaTemporalIndex,
+  value: number,
+): TdpaCorridorSettingsWithTemporal {
+  const settings = resolveTdpaCorridorSettings(study);
+  const temporalDistribution: [number, number, number, number] = settings.temporalDistribution
+    ? [...settings.temporalDistribution]
+    : [0, 0, 0, 0];
+  temporalDistribution[index] = value;
+
+  return {
+    ...settings,
+    temporalDistribution,
   };
 }
 
@@ -118,6 +155,45 @@ export function getTdpaDistributionStatus(
     };
   }
   return { valid: true, text: 'Distribución: 100% · Lista para estimar', issues: [] };
+}
+
+export function getTdpaTemporalStatus(
+  distribution: TdpaTemporalDistribution | null | undefined,
+): { valid: boolean; text: string; issues: string[] } {
+  if (!distribution) {
+    return {
+      valid: false,
+      text: 'Perfil temporal: pendiente · Selecciona un supuesto o captura porcentajes',
+      issues: ['Define explícitamente cómo se reparte la hora de diseño entre cuatro intervalos de 15 minutos.'],
+    };
+  }
+
+  const total = distribution.reduce((sum, value) => sum + value, 0);
+  const issues = validateTdpaTemporalDistribution(distribution);
+
+  if (total > 100 + PERCENT_TOLERANCE) {
+    return {
+      valid: false,
+      text: `Perfil temporal: ${formatPercentage(total)}% · Excede 100% por ${formatPercentage(total - 100)}%`,
+      issues,
+    };
+  }
+  if (total < 100 - PERCENT_TOLERANCE) {
+    return {
+      valid: false,
+      text: `Perfil temporal: ${formatPercentage(total)}% · Falta asignar ${formatPercentage(100 - total)}%`,
+      issues,
+    };
+  }
+  if (issues.length > 0) {
+    return {
+      valid: false,
+      text: 'Perfil temporal: 100% · Revisa los porcentajes',
+      issues,
+    };
+  }
+
+  return { valid: true, text: 'Perfil temporal: 100% · Listo para generar', issues: [] };
 }
 
 export function getTdpaDirectionIssue(settings: TdpaCorridorSettings): string | null {

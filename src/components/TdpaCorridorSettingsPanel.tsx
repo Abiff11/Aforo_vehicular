@@ -1,10 +1,14 @@
 import type { Dispatch } from 'react';
-import type { MovementKey, Study, TdpaCorridorSettings } from '../lib/types';
+import type { MovementKey, Study } from '../lib/types';
 import {
+  applyUniformTdpaTemporalDistribution,
   getTdpaDirectionIssue,
   getTdpaDistributionStatus,
+  getTdpaTemporalStatus,
   resolveTdpaCorridorSettings,
   updateTdpaMovementPercentage,
+  updateTdpaTemporalPercentage,
+  type TdpaCorridorSettingsWithTemporal,
 } from '../lib/tdpaCorridorSettings';
 import { InfoHint } from './InfoHint';
 
@@ -22,15 +26,23 @@ const movementHelp: Record<MovementKey, string> = {
   uTurn: 'Porcentaje del flujo de este acceso que realiza retorno. Manténgalo en 0% cuando ese movimiento no exista o no deba estimarse.',
 };
 
+const temporalLabels = [
+  '0–15 min',
+  '15–30 min',
+  '30–45 min',
+  '45–60 min',
+] as const;
+
 interface TdpaCorridorSettingsPanelProps {
   study: Study;
-  onChange: Dispatch<TdpaCorridorSettings>;
+  onChange: Dispatch<TdpaCorridorSettingsWithTemporal>;
 }
 
 export function TdpaCorridorSettingsPanel({ study, onChange }: TdpaCorridorSettingsPanelProps) {
   const settings = resolveTdpaCorridorSettings(study);
   const accesses = study.configurationSnapshot.accesses;
   const directionIssue = getTdpaDirectionIssue(settings);
+  const temporalStatus = getTdpaTemporalStatus(settings.temporalDistribution);
 
   const updateDirection = (
     field: 'mainDirectionAccessId' | 'oppositeDirectionAccessId',
@@ -151,7 +163,60 @@ export function TdpaCorridorSettingsPanel({ study, onChange }: TdpaCorridorSetti
         {renderDistribution(settings.mainDirectionAccessId, 'Sentido principal')}
         {renderDistribution(settings.oppositeDirectionAccessId, 'Sentido opuesto')}
       </div>
-      <small><strong>Modelo inicial:</strong> 10% izquierda, 80% frente, 10% derecha y 0% retorno. Los movimientos deshabilitados físicamente se mantienen en 0%. <strong>Obligatorio para TDPA:</strong> cada acceso seleccionado debe sumar exactamente 100%.</small>
+
+      <section aria-label="Perfil temporal TDPA" className="panel" style={{ marginTop: 18 }}>
+        <div className="section-heading">
+          <div>
+            <h4 style={{ alignItems: 'center', display: 'flex', gap: 4 }}>
+              Perfil temporal de la hora de diseño
+              <InfoHint label="Perfil temporal TDPA">
+                Define cómo se reparte el volumen de una hora de diseño entre cuatro intervalos de 15 minutos. El CSV TDPA no contiene esta variación temporal, por lo que debe declararse como supuesto.
+              </InfoHint>
+            </h4>
+            <p className="section-description">
+              El CSV TDPA no contiene una distribución cada 15 minutos. Selecciona un supuesto explícito o captura los cuatro porcentajes; deben sumar exactamente 100%.
+            </p>
+          </div>
+          <button
+            className="secondary"
+            onClick={() => onChange(applyUniformTdpaTemporalDistribution(study))}
+            type="button"
+          >
+            Usar uniforme 25/25/25/25
+          </button>
+        </div>
+        <p className="warning">
+          <strong>Supuesto temporal:</strong> estos porcentajes no provienen del archivo TDPA y quedarán identificados como parte de la metodología de estimación.
+        </p>
+        <div className="form-grid">
+          {temporalLabels.map((label, index) => (
+            <label key={label}>
+              Intervalo {index + 1} · {label} (%)
+              <input
+                aria-label={`Porcentaje intervalo TDPA ${index + 1}`}
+                max={100}
+                min={0}
+                step="0.1"
+                type="number"
+                value={settings.temporalDistribution?.[index] ?? ''}
+                onChange={(event) => onChange(updateTdpaTemporalPercentage(
+                  study,
+                  index as 0 | 1 | 2 | 3,
+                  event.target.value === '' ? 0 : Number(event.target.value),
+                ))}
+              />
+            </label>
+          ))}
+        </div>
+        <p className={temporalStatus.valid ? 'result' : 'warning'}>{temporalStatus.text}</p>
+        {temporalStatus.issues.length > 0 && settings.temporalDistribution && (
+          <ul>
+            {temporalStatus.issues.map((issue) => <li key={issue}>{issue}</li>)}
+          </ul>
+        )}
+      </section>
+
+      <small><strong>Modelo inicial de giros:</strong> 10% izquierda, 80% frente, 10% derecha y 0% retorno. Los movimientos deshabilitados físicamente se mantienen en 0%. <strong>Obligatorio para TDPA:</strong> cada acceso seleccionado debe sumar exactamente 100% y el perfil temporal debe declararse antes de generar intervalos.</small>
     </section>
   );
 }
