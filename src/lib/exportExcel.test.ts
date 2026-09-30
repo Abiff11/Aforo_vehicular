@@ -244,6 +244,7 @@ describe('exportStudyWorkbook calculation integrity', () => {
     const study: Study = {
       ...importedStudy,
       tdpaCorridorSettings: applyUniformTdpaTemporalDistribution(importedStudy),
+      tdpaGeneratedAt: '2026-09-30T18:00:00.000Z',
     };
     const workbook = exportStudyWorkbook(study, intersections[0]);
 
