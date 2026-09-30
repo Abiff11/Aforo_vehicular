@@ -530,6 +530,16 @@ function buildTdpaEstimateRows(study: Study): Array<Record<string, string | numb
     'Supuesto declarado por usuario',
   );
 
+  if (!study.tdpaGeneratedAt) {
+    rows.push(createTdpaExportRow({
+      Tipo: 'Estado',
+      Concepto: 'Generación TDPA',
+      Valor: 'Pendiente de generar o regenerar.',
+      Origen: 'Ciclo de estado',
+    }));
+    return rows;
+  }
+
   const validation = validateTdpaIntersectionEstimate(
     estimate,
     study.configurationSnapshot.accesses,
