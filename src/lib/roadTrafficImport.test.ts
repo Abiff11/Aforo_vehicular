@@ -295,7 +295,7 @@ describe('road traffic import', () => {
     );
 
     expect(imported.study.source).toBe('estimated_tdpa');
-    expect(imported.study.currentStep).toBe(6);
+    expect(imported.study.currentStep).toBe(0);
     expect(imported.study.tdpaEstimate).toMatchObject({
       referenceYear: 2024,
       dailyTraffic: 24977,

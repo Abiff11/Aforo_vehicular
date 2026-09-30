@@ -576,7 +576,6 @@ function applyRoadTrafficEstimate(study: Study, record: RoadTrafficRecord): Stud
 
   return {
     ...study,
-    currentStep: 6,
     source: preserveObservedSource ? 'observed' : 'estimated_tdpa',
     tdpaEstimate: createTdpaEstimate(record),
     status,
