@@ -39,7 +39,11 @@ describe('WizardApp TDPA corridor defaults', () => {
   it('applies one TDPA base configuration to the linked corridor and keeps later intersection edits independent', () => {
     const initial = createInitialState();
     const studyA = prepareStudy(corridorIntersections[0], 0);
-    const studyB = prepareStudy(corridorIntersections[1], 1);
+    const studyB = {
+      ...prepareStudy(corridorIntersections[1], 1),
+      tdpaGeneratedAt: '2026-09-30T12:00:00.000Z',
+      status: 'validated' as const,
+    };
     const studyC = prepareStudy(corridorIntersections[2], 1);
 
     saveStoredState({
@@ -61,6 +65,8 @@ describe('WizardApp TDPA corridor defaults', () => {
       left: 10, through: 70, right: 20, uTurn: 0,
     });
     expect(persisted.studiesByIntersection?.['INT-C']?.tdpaCorridorSettings?.temporalDistribution).toEqual([25, 25, 25, 25]);
+    expect(persisted.studiesByIntersection?.['INT-B']?.tdpaGeneratedAt).toBeNull();
+    expect(persisted.studiesByIntersection?.['INT-B']?.status).toBe('draft');
 
     fireEvent.change(screen.getByLabelText('Porcentaje Frente Norte'), { target: { value: '60' } });
 
