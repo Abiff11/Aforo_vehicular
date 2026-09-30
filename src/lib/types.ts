@@ -172,6 +172,7 @@ export interface Study {
   source?: StudySource;
   tdpaEstimate?: TdpaEstimate | null;
   tdpaCorridorSettings?: TdpaCorridorSettings | null;
+  tdpaGeneratedAt?: string | null;
   legacyUnverified?: boolean;
   createdAt: string;
   updatedAt: string;

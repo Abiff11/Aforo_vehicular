@@ -291,6 +291,7 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(screen.getByRole('heading', { name: 'Configuracion de accesos' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^4\s*Semaforo$/ })).toBeEnabled();
     expect(screen.getByRole('button', { name: /^7\s*Resultados$/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Usar uniforme 25/25/25/25' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Continuar a Semaforo' }));
     fireEvent.click(screen.getByRole('button', { name: 'Continuar a Aforo' }));
@@ -300,9 +301,15 @@ describe('WizardApp ficha aforo capture flow', () => {
     const estimateTable = screen.getByRole('table', { name: 'Volumen horario estimado TDPA' });
     expect(within(estimateTable).getByText('776')).toBeInTheDocument();
     expect(within(estimateTable).getByText('742')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Generar aforo estimado' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Generar aforo estimado' }));
+    expect(screen.getByRole('table', { name: 'Intervalos estimados TDPA' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Continuar a Validar' }));
     expect(screen.getByRole('heading', { name: 'Validación de estimación TDPA' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Validar estimación TDPA' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Continuar a Resultados' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Validar estimación TDPA' }));
     expect(screen.getByText('Estimación TDPA lista para resultados.')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Captura por revisar' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Continuar a Resultados' })).toBeEnabled();
@@ -313,7 +320,7 @@ describe('WizardApp ficha aforo capture flow', () => {
     expect(screen.getByText('Volumen hora de diseño estimado')).toBeInTheDocument();
     expect(screen.getByText('1,898')).toBeInTheDocument();
     expect(screen.getByText('T. Aut. Cuacnopalan - Oaxaca')).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Volumen por intervalo' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Volumen estimado por intervalo de 15 minutos' })).toBeInTheDocument();
   });
 
   it('blocks TDPA results when movement distribution is invalid and guides back to Configuracion', async () => {

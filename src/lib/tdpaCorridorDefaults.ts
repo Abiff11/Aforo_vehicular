@@ -78,6 +78,7 @@ export function applyTdpaSettingsToCorridorStudies(
         {
           ...study,
           tdpaCorridorSettings: normalizedSettings,
+          tdpaGeneratedAt: null,
           status: study.status === 'validated' || study.status === 'exported' ? 'draft' : study.status,
           updatedAt,
         },

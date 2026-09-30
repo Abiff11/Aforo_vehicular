@@ -222,6 +222,16 @@ function studyStatusLabel(study: Study): string {
   return 'Borrador';
 }
 
+function invalidateTdpaGeneration(study: Study): Study {
+  if ((study.source ?? 'observed') !== 'estimated_tdpa') return study;
+  return {
+    ...study,
+    tdpaGeneratedAt: null,
+    status: study.status === 'validated' || study.status === 'exported' ? 'draft' : study.status,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 export function WizardApp() {
   const [state, setState] = useState<StoredState>(getInitialState);
   const [helpStepIndex, setHelpStepIndex] = useState<number | null>(null);
@@ -249,12 +259,19 @@ export function WizardApp() {
   const tdpaTemporalStatus = isTdpaStudy && tdpaSettings
     ? getTdpaTemporalStatus(tdpaSettings.temporalDistribution)
     : null;
-  const tdpaTemporalEstimate = tdpaValidation?.valid
+  const tdpaReadyToGenerate = Boolean(
+    tdpaValidation?.valid
     && tdpaValidation.estimate
     && tdpaSettings?.temporalDistribution
-    && tdpaTemporalStatus?.valid
+    && tdpaTemporalStatus?.valid,
+  );
+  const tdpaTemporalEstimate = tdpaReadyToGenerate
+    && activeStudy.tdpaGeneratedAt
+    && tdpaValidation?.estimate
+    && tdpaSettings?.temporalDistribution
     ? createTdpaTemporalEstimate(tdpaValidation.estimate, tdpaSettings.temporalDistribution)
     : null;
+  const tdpaReadyForValidation = Boolean(tdpaReadyToGenerate && activeStudy.tdpaGeneratedAt && tdpaTemporalEstimate);
   const nextWizardStep = wizardSteps[activeStudy.currentStep + 1] ?? null;
 
   const summary = useMemo(
@@ -520,6 +537,7 @@ export function WizardApp() {
         study: {
           ...study,
           currentStep: 1,
+          tdpaGeneratedAt: null,
           relatedIntersectionIds: intersection.relatedIntersectionIds ?? study.relatedIntersectionIds,
         },
       }));
@@ -558,7 +576,11 @@ export function WizardApp() {
   function canNavigateToStep(index: number): boolean {
     if (!selectedIntersection && index > 1) return false;
     if (isGuidedTdpaStudy && index > activeStudy.currentStep + 1) return false;
-    if (isGuidedTdpaStudy && activeStudy.currentStep === 5 && index > 5 && !tdpaValidation?.valid) return false;
+    if (
+      isTdpaStudy
+      && index > 5
+      && (!tdpaReadyForValidation || (activeStudy.status !== 'validated' && activeStudy.status !== 'exported'))
+    ) return false;
     return true;
   }
 
@@ -625,14 +647,31 @@ export function WizardApp() {
         tdpaCorridorSettings: updateTdpaMovementPercentage(activeStudy, accessId, movement, 0),
       };
     }
-    setActiveStudy(nextStudy);
+    setActiveStudy(invalidateTdpaGeneration(nextStudy));
   }
 
   function updateSignalGroup(assignment: SignalMovementAssignment, changes: Partial<Omit<SignalMovementAssignment, 'id'>>): void {
     setActiveStudy(updateSignalMovementAssignment(activeStudy, assignment.id, changes));
   }
 
+  function generateTdpaAforo(): void {
+    if (!tdpaReadyToGenerate) return;
+    const now = new Date().toISOString();
+    setActiveStudy({
+      ...activeStudy,
+      tdpaGeneratedAt: now,
+      status: 'draft',
+      updatedAt: now,
+    });
+  }
+
   function validateCurrentStudy(): void {
+    if (isTdpaStudy) {
+      if (!tdpaReadyForValidation) return;
+      setActiveStudy({ ...activeStudy, status: 'validated', updatedAt: new Date().toISOString() });
+      return;
+    }
+
     let confirmLegacy = false;
     if (activeStudy.legacyUnverified) {
       confirmLegacy = window.confirm('Este estudio proviene de una versión anterior. ¿Confirmas que revisaste los ceros históricos y la captura completa?');
@@ -730,6 +769,14 @@ export function WizardApp() {
     downloadStudyWorkbook(activeStudy, selectedIntersection);
     setActiveStudy(markStudyExported(activeStudy));
   }
+
+  const tdpaLifecycleIssues = isTdpaStudy
+    ? [
+        ...(tdpaValidation?.issues ?? []),
+        ...(tdpaTemporalStatus?.valid ? [] : ['El perfil temporal TDPA debe contener cuatro intervalos y sumar exactamente 100%.']),
+        ...(activeStudy.tdpaGeneratedAt ? [] : ['Genera el aforo estimado antes de validar.']),
+      ]
+    : [];
 
   return (
     <main className="app-shell">
@@ -910,8 +957,8 @@ export function WizardApp() {
               {activeStudy.configurationSnapshot.accesses.map((access) => (
                 <article className="access-card" key={access.id}>
                   <h3>{access.name}</h3>
-                  <label>Nombre del acceso<input value={access.name} onChange={(event) => setActiveStudy(updateAccessConfig(activeStudy, access.id, { name: event.target.value }))} /></label>
-                  <label>Carriles<input min={1} type="number" value={access.lanes} onChange={(event) => setActiveStudy(updateAccessConfig(activeStudy, access.id, { lanes: Number(event.target.value) || 1 }))} /></label>
+                  <label>Nombre del acceso<input value={access.name} onChange={(event) => setActiveStudy(invalidateTdpaGeneration(updateAccessConfig(activeStudy, access.id, { name: event.target.value })))} /></label>
+                  <label>Carriles<input min={1} type="number" value={access.lanes} onChange={(event) => setActiveStudy(invalidateTdpaGeneration(updateAccessConfig(activeStudy, access.id, { lanes: Number(event.target.value) || 1 })))} /></label>
                   <div className="movement-row">
                     {Object.entries(movementLabels).map(([key, label]) => (
                       <button className={access.movements[key as MovementKey] ? 'badge enabled' : 'badge'} key={key} onClick={() => toggleMovement(access.id, key as MovementKey)} type="button">{label}</button>
@@ -926,6 +973,7 @@ export function WizardApp() {
               onChange={(settings) => setActiveStudy({
                 ...activeStudy,
                 tdpaCorridorSettings: settings,
+                tdpaGeneratedAt: null,
                 status: activeStudy.status === 'validated' || activeStudy.status === 'exported' ? 'draft' : activeStudy.status,
                 updatedAt: new Date().toISOString(),
               })}
@@ -1133,7 +1181,21 @@ export function WizardApp() {
                   </div>
                   <p className="result"><CheckCircle2 size={18} /> Los movimientos conservan el volumen horario de cada acceso y ambos sentidos conservan el volumen de hora de diseño.</p>
 
-                  {tdpaTemporalEstimate ? (
+                  {!tdpaTemporalStatus?.valid ? (
+                    <section className="panel">
+                      <h3>Perfil temporal TDPA pendiente</h3>
+                      <p className="warning"><AlertTriangle size={16} /> No se generan valores de 15 minutos hasta declarar en Configuración un perfil temporal que sume exactamente 100%.</p>
+                      <button className="primary" onClick={() => goToStep(2)} type="button">Configurar perfil temporal TDPA</button>
+                    </section>
+                  ) : !activeStudy.tdpaGeneratedAt ? (
+                    <section className="panel">
+                      <h3>Generar intervalos estimados</h3>
+                      <p className="section-description">
+                        Revisa el volumen horario, los sentidos, el reparto de movimientos y el perfil temporal. La generación es una acción explícita porque crea el resultado estimado que después será validado.
+                      </p>
+                      <button className="primary" onClick={generateTdpaAforo} type="button">Generar aforo estimado</button>
+                    </section>
+                  ) : tdpaTemporalEstimate ? (
                     <section className="panel">
                       <h3>Intervalos estimados TDPA de 15 minutos</h3>
                       <p className="warning">ESTIMADO TDPA · PERFIL TEMPORAL ASUMIDO</p>
@@ -1161,14 +1223,9 @@ export function WizardApp() {
                           </tbody>
                         </table>
                       </div>
+                      <p className="result"><CheckCircle2 size={18} /> Aforo estimado generado. Si cambias la geometría, los porcentajes o el perfil temporal, deberás generarlo nuevamente.</p>
                     </section>
-                  ) : (
-                    <section className="panel">
-                      <h3>Perfil temporal TDPA pendiente</h3>
-                      <p className="warning"><AlertTriangle size={16} /> No se generan valores de 15 minutos hasta declarar en Configuración un perfil temporal que sume exactamente 100%.</p>
-                      <button className="primary" onClick={() => goToStep(2)} type="button">Configurar perfil temporal TDPA</button>
-                    </section>
-                  )}
+                  ) : null}
 
                   <p className="warning"><AlertTriangle size={16} /> Estimación TDPA: estos valores no sustituyen una medición física de movimientos, peatones, bicicletas, colas o ciclos observados.</p>
                 </>
@@ -1291,12 +1348,17 @@ export function WizardApp() {
               <div className="section-heading">
                 <div>
                   <h2>Validación de estimación TDPA</h2>
-                  <p>Se revisa la coherencia de la fuente TDPA y de la distribución configurada; no se exige captura física.</p>
+                  <p>Se revisa la fuente, la configuración y el aforo estimado generado; no se exige captura física.</p>
                 </div>
+                {tdpaReadyForValidation && activeStudy.status !== 'validated' && activeStudy.status !== 'exported' && (
+                  <button className="primary" onClick={validateCurrentStudy} type="button">Validar estimación TDPA</button>
+                )}
               </div>
-              {tdpaValidation?.valid ? (
+              {tdpaReadyForValidation ? (
                 <>
-                  <p className="result" role="status"><CheckCircle2 size={18} /> Estimación TDPA lista para resultados.</p>
+                  <p className="result" role="status">
+                    <CheckCircle2 size={18} /> {activeStudy.status === 'validated' || activeStudy.status === 'exported' ? 'Estimación TDPA lista para resultados.' : 'Estimación TDPA lista para validar.'}
+                  </p>
                   <section className="panel">
                     <h3>Comprobaciones de la estimación</h3>
                     <ul>
@@ -1305,19 +1367,19 @@ export function WizardApp() {
                       <li>Cada acceso seleccionado distribuye exactamente 100% entre sus movimientos habilitados.</li>
                       <li>La suma de movimientos conserva el volumen horario de cada acceso.</li>
                       <li>La suma de ambos sentidos coincide con el volumen de hora de diseño.</li>
-                      {tdpaTemporalStatus?.valid && <li>El perfil temporal declarado contiene cuatro intervalos y suma exactamente 100%.</li>}
+                      <li>El perfil temporal declarado contiene cuatro intervalos y suma exactamente 100%.</li>
+                      <li>El aforo estimado de 15 minutos fue generado explícitamente.</li>
                     </ul>
-                    {!tdpaTemporalStatus?.valid && (
-                      <p className="warning"><AlertTriangle size={16} /> La estimación horaria es coherente, pero los intervalos de 15 minutos permanecerán sin generar hasta declarar un perfil temporal válido.</p>
-                    )}
                   </section>
                 </>
               ) : (
                 <section className="panel">
-                  <h3>Configuración TDPA por revisar</h3>
-                  <p className="warning"><AlertTriangle size={16} /> Corrige estas condiciones antes de pasar a Resultados.</p>
-                  <ul>{tdpaValidation?.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>
-                  <button className="primary" onClick={() => goToStep(2)} type="button">Revisar Configuración TDPA</button>
+                  <h3>Estimación TDPA por completar</h3>
+                  <p className="warning"><AlertTriangle size={16} /> Completa estas condiciones antes de pasar a Resultados.</p>
+                  <ul>{tdpaLifecycleIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul>
+                  {!tdpaValidation?.valid && <button className="primary" onClick={() => goToStep(2)} type="button">Revisar Configuración TDPA</button>}
+                  {tdpaValidation?.valid && !tdpaTemporalStatus?.valid && <button className="primary" onClick={() => goToStep(2)} type="button">Configurar perfil temporal TDPA</button>}
+                  {tdpaReadyToGenerate && !activeStudy.tdpaGeneratedAt && <button className="primary" onClick={() => goToStep(4)} type="button">Ir a generar aforo estimado</button>}
                 </section>
               )}
               <section className="panel">

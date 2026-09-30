@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { loadStoredState } from '../lib/storage';
 import { WizardApp } from './WizardApp';
 
 const roadTrafficCsv = `CARRETERA,"CLAVE CARRETERA",RUTA,"PUNTO GENERADOR",KM,TIPO,SC,TDPA2024,M,A,B,C2,C3,T3S2,T3S3,T3S2R4,OTROS,AUTOS,AUTOBUSES,CAMIONES,D,K',LAT,LONG
@@ -13,7 +14,7 @@ describe('WizardApp TDPA temporal estimation flow', () => {
     localStorage.clear();
   });
 
-  it('generates explicit 15-minute estimated intervals and carries them to Results', async () => {
+  it('generates explicit 15-minute estimated intervals, validates them and carries them to Results', async () => {
     render(<WizardApp />);
     fireEvent.click(screen.getByRole('button', { name: /^2\s*Interseccion$/ }));
     fireEvent.click(screen.getByRole('button', { name: mapCreateButtonName }));
@@ -27,14 +28,25 @@ describe('WizardApp TDPA temporal estimation flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continuar a Semaforo' }));
     fireEvent.click(screen.getByRole('button', { name: 'Continuar a Aforo' }));
 
+    expect(screen.queryByRole('table', { name: 'Intervalos estimados TDPA' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Generar aforo estimado' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Generar aforo estimado' }));
+
     expect(screen.getByRole('heading', { name: 'Intervalos estimados TDPA de 15 minutos' })).toBeInTheDocument();
     expect(screen.getByText('ESTIMADO TDPA · PERFIL TEMPORAL ASUMIDO')).toBeInTheDocument();
     const intervalTable = screen.getByRole('table', { name: 'Intervalos estimados TDPA' });
     expect(within(intervalTable).getAllByText('0–15 min').length).toBe(2);
     expect(within(intervalTable).getByText('244')).toBeInTheDocument();
     expect(within(intervalTable).getByText('234')).toBeInTheDocument();
+    expect(loadStoredState().activeStudy?.tdpaGeneratedAt).toBeTruthy();
+    expect(loadStoredState().activeStudy?.status).toBe('draft');
 
     fireEvent.click(screen.getByRole('button', { name: 'Continuar a Validar' }));
+    expect(screen.getByRole('button', { name: 'Validar estimación TDPA' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Validar estimación TDPA' }));
+    expect(loadStoredState().activeStudy?.status).toBe('validated');
+
     fireEvent.click(screen.getByRole('button', { name: 'Continuar a Resultados' }));
 
     expect(screen.getByRole('heading', { name: 'Perfil temporal estimado de 15 minutos' })).toBeInTheDocument();
@@ -42,7 +54,7 @@ describe('WizardApp TDPA temporal estimation flow', () => {
     expect(screen.getByText(/Perfil temporal asumido: 25% · 25% · 25% · 25%/)).toBeInTheDocument();
   });
 
-  it('does not fabricate interval volumes when the temporal profile is missing', async () => {
+  it('does not fabricate interval volumes or allow generation when the temporal profile is missing', async () => {
     render(<WizardApp />);
     fireEvent.click(screen.getByRole('button', { name: /^2\s*Interseccion$/ }));
     fireEvent.click(screen.getByRole('button', { name: mapCreateButtonName }));
@@ -56,6 +68,7 @@ describe('WizardApp TDPA temporal estimation flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continuar a Aforo' }));
 
     expect(screen.getByRole('heading', { name: 'Perfil temporal TDPA pendiente' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Generar aforo estimado' })).not.toBeInTheDocument();
     expect(screen.queryByRole('table', { name: 'Intervalos estimados TDPA' })).not.toBeInTheDocument();
   });
 });
