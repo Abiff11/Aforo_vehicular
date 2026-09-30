@@ -7,6 +7,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import type { IntersectionTrafficEstimate } from '../lib/roadTrafficImport';
 import type { StudySource, StudySummary, TdpaEstimate } from '../lib/types';
 
 const numberFormat = new Intl.NumberFormat('es-MX');
@@ -16,6 +17,7 @@ interface ResultsDashboardProps {
   intervalMinutes: number;
   source?: StudySource;
   tdpaEstimate?: TdpaEstimate | null;
+  tdpaTrafficEstimate?: IntersectionTrafficEstimate | null;
   legacyUnverified?: boolean;
 }
 
@@ -25,6 +27,10 @@ function formatNullable(value: number | null | undefined, digits = 0): string {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   });
+}
+
+function formatPercent(value: number): string {
+  return value.toLocaleString('es-MX', { maximumFractionDigits: 1 });
 }
 
 function DashboardChart({
@@ -85,17 +91,142 @@ function TdpaPanel({ estimate }: { estimate: TdpaEstimate | null | undefined }) 
   );
 }
 
+function TdpaExecutiveResults({
+  estimate,
+  trafficEstimate,
+}: {
+  estimate: TdpaEstimate | null | undefined;
+  trafficEstimate: IntersectionTrafficEstimate | null | undefined;
+}) {
+  const accessChartData = trafficEstimate?.accesses.map((access) => ({
+    label: access.accessName,
+    volumen: access.hourlyVolume,
+  })) ?? [];
+  const movementChartData = trafficEstimate ? [
+    {
+      label: 'Izquierda',
+      volumen: trafficEstimate.accesses.reduce((sum, access) => sum + access.movements.left, 0),
+    },
+    {
+      label: 'Frente',
+      volumen: trafficEstimate.accesses.reduce((sum, access) => sum + access.movements.through, 0),
+    },
+    {
+      label: 'Derecha',
+      volumen: trafficEstimate.accesses.reduce((sum, access) => sum + access.movements.right, 0),
+    },
+    {
+      label: 'Retorno',
+      volumen: trafficEstimate.accesses.reduce((sum, access) => sum + access.movements.uTurn, 0),
+    },
+  ] : [];
+
+  return (
+    <>
+      <section aria-label="Estimación TDPA" className="tdpa-estimate panel">
+        <div className="section-heading">
+          <div>
+            <p className="section-eyebrow">Resultados estimados</p>
+            <h2>Resultados estimados mediante TDPA</h2>
+          </div>
+          <span className="status-pill">Estimado</span>
+        </div>
+        <p>
+          Los valores fueron calculados a partir del registro TDPA y de la configuración de accesos y movimientos de esta intersección. No corresponden a un conteo observado en campo.
+        </p>
+        <p className="warning">ESTIMACIÓN TDPA — NO SUSTITUYE UN AFORO DE INTERSECCIÓN EN CAMPO.</p>
+        <h3>Estimación TDPA</h3>
+        {!estimate ? (
+          <p>N/D — no existe un registro TDPA válido asociado.</p>
+        ) : (
+          <div className="dashboard-kpis">
+            <article className="kpi"><span>TDPA</span><strong>{numberFormat.format(estimate.dailyTraffic)}</strong></article>
+            <article className="kpi"><span>Año de referencia</span><strong>{estimate.referenceYear}</strong></article>
+            <article className="kpi"><span>K&apos;</span><strong>{estimate.designHourFactor.toFixed(3)}</strong></article>
+            <article className="kpi"><span>D</span><strong>{estimate.directionalDistribution.toFixed(3)}</strong></article>
+            <article className="kpi"><span>Volumen hora de diseño estimado</span><strong>{numberFormat.format(estimate.designHourTotal)}</strong></article>
+            <article className="kpi"><span>Dirección principal estimada</span><strong>{numberFormat.format(estimate.mainDirectionHour)}</strong></article>
+            <article className="kpi"><span>Dirección opuesta estimada</span><strong>{numberFormat.format(estimate.oppositeDirectionHour)}</strong></article>
+            <article className="kpi"><span>Motos/h estimadas</span><strong>{numberFormat.format(estimate.hourlyMotorcycles)}</strong></article>
+            <article className="kpi"><span>Pesados/h estimados</span><strong>{numberFormat.format(estimate.hourlyHeavyVehicles)}</strong></article>
+          </div>
+        )}
+      </section>
+
+      {estimate && trafficEstimate ? (
+        <>
+          <section className="dashboard-table panel">
+            <h3>Distribución estimada por acceso y movimiento</h3>
+            <div className="table-wrap dashboard-table-wrap">
+              <table aria-label="Distribución estimada TDPA por acceso y movimiento">
+                <thead>
+                  <tr>
+                    <th>Sentido</th><th>Acceso</th><th>Volumen/h</th><th>Izquierda</th><th>Frente</th><th>Derecha</th><th>Retorno</th><th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trafficEstimate.accesses.map((access) => {
+                    const movementTotal = Object.values(access.movements).reduce((sum, value) => sum + value, 0);
+                    return (
+                      <tr key={access.accessId}>
+                        <td>{access.direction === 'main' ? 'Principal' : 'Opuesto'}</td>
+                        <td>{access.accessName}</td>
+                        <td>{numberFormat.format(access.hourlyVolume)}</td>
+                        <td>{numberFormat.format(access.movements.left)}</td>
+                        <td>{numberFormat.format(access.movements.through)}</td>
+                        <td>{numberFormat.format(access.movements.right)}</td>
+                        <td>{numberFormat.format(access.movements.uTurn)}</td>
+                        <td><strong>{numberFormat.format(movementTotal)}</strong></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section aria-label="Resultados TDPA estimados" className="dashboard-charts charts">
+            <DashboardChart title="Volumen estimado por acceso" data={accessChartData} dataKey="volumen" labelKey="label" />
+            <DashboardChart title="Distribución estimada por movimiento" data={movementChartData} dataKey="volumen" labelKey="label" />
+          </section>
+
+          <section className="panel">
+            <h3>Cómo se obtuvo este resultado</h3>
+            <ol className="help-list">
+              <li>TDPA {numberFormat.format(estimate.dailyTraffic)} veh/día · año {estimate.referenceYear}.</li>
+              <li>K&apos; {formatPercent(estimate.designHourFactor * 100)}% → volumen hora de diseño {numberFormat.format(estimate.designHourTotal)} veh/h.</li>
+              <li>D {formatPercent(estimate.directionalDistribution * 100)}% → principal {numberFormat.format(estimate.mainDirectionHour)} veh/h y opuesto {numberFormat.format(estimate.oppositeDirectionHour)} veh/h.</li>
+              {trafficEstimate.accesses.map((access) => (
+                <li key={`trace-${access.accessId}`}>
+                  {access.accessName}: Izquierda {formatPercent(access.distribution.left)}% · Frente {formatPercent(access.distribution.through)}% · Derecha {formatPercent(access.distribution.right)}% · Retorno {formatPercent(access.distribution.uTurn)}%.
+                </li>
+              ))}
+            </ol>
+            <p className="section-description">No se genera una gráfica por intervalo porque el TDPA no aporta por sí mismo una distribución temporal de 15 minutos.</p>
+          </section>
+        </>
+      ) : estimate ? (
+        <section className="panel">
+          <h3>Distribución por movimiento no disponible</h3>
+          <p>N/D — revise y valide la configuración TDPA para obtener el desglose por acceso y movimiento.</p>
+        </section>
+      ) : null}
+    </>
+  );
+}
+
 export function ResultsDashboard({
   summary,
   intervalMinutes,
   source = 'observed',
   tdpaEstimate = null,
+  tdpaTrafficEstimate = null,
   legacyUnverified = false,
 }: ResultsDashboardProps) {
   if (source === 'estimated_tdpa') {
     return (
       <section aria-label="Resumen ejecutivo de resultados" className="results-dashboard">
-        <TdpaPanel estimate={tdpaEstimate} />
+        <TdpaExecutiveResults estimate={tdpaEstimate} trafficEstimate={tdpaTrafficEstimate} />
       </section>
     );
   }

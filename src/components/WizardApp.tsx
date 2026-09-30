@@ -1304,6 +1304,7 @@ export function WizardApp() {
               intervalMinutes={activeStudy.metadata.intervalMinutes}
               source={activeStudy.source ?? 'observed'}
               tdpaEstimate={activeStudy.tdpaEstimate ?? null}
+              tdpaTrafficEstimate={tdpaValidation?.estimate ?? null}
               legacyUnverified={activeStudy.legacyUnverified ?? false}
             />
           </section>
