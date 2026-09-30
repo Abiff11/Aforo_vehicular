@@ -8,6 +8,7 @@ import {
   YAxis,
 } from 'recharts';
 import type { IntersectionTrafficEstimate } from '../lib/roadTrafficImport';
+import type { TdpaTemporalEstimate } from '../lib/tdpaTemporalProfile';
 import type { StudySource, StudySummary, TdpaEstimate } from '../lib/types';
 
 const numberFormat = new Intl.NumberFormat('es-MX');
@@ -18,6 +19,7 @@ interface ResultsDashboardProps {
   source?: StudySource;
   tdpaEstimate?: TdpaEstimate | null;
   tdpaTrafficEstimate?: IntersectionTrafficEstimate | null;
+  tdpaTemporalEstimate?: TdpaTemporalEstimate | null;
   legacyUnverified?: boolean;
 }
 
@@ -94,9 +96,11 @@ function TdpaPanel({ estimate }: { estimate: TdpaEstimate | null | undefined }) 
 function TdpaExecutiveResults({
   estimate,
   trafficEstimate,
+  temporalEstimate,
 }: {
   estimate: TdpaEstimate | null | undefined;
   trafficEstimate: IntersectionTrafficEstimate | null | undefined;
+  temporalEstimate: TdpaTemporalEstimate | null | undefined;
 }) {
   const accessChartData = trafficEstimate?.accesses.map((access) => ({
     label: access.accessName,
@@ -120,6 +124,10 @@ function TdpaExecutiveResults({
       volumen: trafficEstimate.accesses.reduce((sum, access) => sum + access.movements.uTurn, 0),
     },
   ] : [];
+  const intervalChartData = temporalEstimate?.intervals.map((interval) => ({
+    label: interval.label,
+    volumen: interval.total,
+  })) ?? [];
 
   return (
     <>
@@ -190,6 +198,35 @@ function TdpaExecutiveResults({
             <DashboardChart title="Distribución estimada por movimiento" data={movementChartData} dataKey="volumen" labelKey="label" />
           </section>
 
+          {temporalEstimate ? (
+            <>
+              <section className="dashboard-table panel">
+                <h3>Perfil temporal estimado de 15 minutos</h3>
+                <p className="warning">ESTIMADO TDPA · PERFIL TEMPORAL ASUMIDO</p>
+                <p className="section-description">
+                  Estos intervalos distribuyen la hora de diseño mediante el perfil declarado por el usuario. No representan conteos observados cada 15 minutos.
+                </p>
+                <div className="table-wrap dashboard-table-wrap">
+                  <table aria-label="Perfil temporal estimado TDPA">
+                    <thead><tr><th>Intervalo</th><th>Porcentaje asumido</th><th>Volumen estimado</th></tr></thead>
+                    <tbody>
+                      {temporalEstimate.intervals.map((interval) => (
+                        <tr key={interval.index}>
+                          <td>{interval.label}</td>
+                          <td>{formatPercent(interval.sharePercent)}%</td>
+                          <td><strong>{numberFormat.format(interval.total)}</strong></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+              <section aria-label="Perfil temporal TDPA estimado" className="dashboard-charts charts">
+                <DashboardChart title="Volumen estimado por intervalo de 15 minutos" data={intervalChartData} dataKey="volumen" labelKey="label" />
+              </section>
+            </>
+          ) : null}
+
           <section className="panel">
             <h3>Cómo se obtuvo este resultado</h3>
             <ol className="help-list">
@@ -201,8 +238,13 @@ function TdpaExecutiveResults({
                   {access.accessName}: Izquierda {formatPercent(access.distribution.left)}% · Frente {formatPercent(access.distribution.through)}% · Derecha {formatPercent(access.distribution.right)}% · Retorno {formatPercent(access.distribution.uTurn)}%.
                 </li>
               ))}
+              {temporalEstimate && (
+                <li>Perfil temporal asumido: {temporalEstimate.distribution.map((value) => `${formatPercent(value)}%`).join(' · ')}.</li>
+              )}
             </ol>
-            <p className="section-description">No se genera una gráfica por intervalo porque el TDPA no aporta por sí mismo una distribución temporal de 15 minutos.</p>
+            {!temporalEstimate && (
+              <p className="section-description">No se genera una gráfica por intervalo porque todavía no se ha declarado un perfil temporal de 15 minutos.</p>
+            )}
           </section>
         </>
       ) : estimate ? (
@@ -221,12 +263,17 @@ export function ResultsDashboard({
   source = 'observed',
   tdpaEstimate = null,
   tdpaTrafficEstimate = null,
+  tdpaTemporalEstimate = null,
   legacyUnverified = false,
 }: ResultsDashboardProps) {
   if (source === 'estimated_tdpa') {
     return (
       <section aria-label="Resumen ejecutivo de resultados" className="results-dashboard">
-        <TdpaExecutiveResults estimate={tdpaEstimate} trafficEstimate={tdpaTrafficEstimate} />
+        <TdpaExecutiveResults
+          estimate={tdpaEstimate}
+          temporalEstimate={tdpaTemporalEstimate}
+          trafficEstimate={tdpaTrafficEstimate}
+        />
       </section>
     );
   }

@@ -40,7 +40,12 @@ import {
   validateStudy,
 } from '../lib/study';
 import { createInitialState, loadStoredState, saveStoredState, STORAGE_KEY } from '../lib/storage';
-import { resolveTdpaCorridorSettings, updateTdpaMovementPercentage } from '../lib/tdpaCorridorSettings';
+import {
+  getTdpaTemporalStatus,
+  resolveTdpaCorridorSettings,
+  updateTdpaMovementPercentage,
+} from '../lib/tdpaCorridorSettings';
+import { createTdpaTemporalEstimate } from '../lib/tdpaTemporalProfile';
 import { validateStudyPeriod } from '../lib/time';
 import type { CorridorTrafficStudy, RoadTrafficProfile } from '../lib/roadTrafficImport';
 import type {
@@ -239,6 +244,15 @@ export function WizardApp() {
         activeStudy.configurationSnapshot.accesses,
         tdpaSettings,
       )
+    : null;
+  const tdpaTemporalStatus = isTdpaStudy && tdpaSettings
+    ? getTdpaTemporalStatus(tdpaSettings.temporalDistribution)
+    : null;
+  const tdpaTemporalEstimate = tdpaValidation?.valid
+    && tdpaValidation.estimate
+    && tdpaSettings?.temporalDistribution
+    && tdpaTemporalStatus?.valid
+    ? createTdpaTemporalEstimate(tdpaValidation.estimate, tdpaSettings.temporalDistribution)
     : null;
   const nextWizardStep = wizardSteps[activeStudy.currentStep + 1] ?? null;
 
@@ -1065,6 +1079,44 @@ export function WizardApp() {
                     </table>
                   </div>
                   <p className="result"><CheckCircle2 size={18} /> Los movimientos conservan el volumen horario de cada acceso y ambos sentidos conservan el volumen de hora de diseño.</p>
+
+                  {tdpaTemporalEstimate ? (
+                    <section className="panel">
+                      <h3>Intervalos estimados TDPA de 15 minutos</h3>
+                      <p className="warning">ESTIMADO TDPA · PERFIL TEMPORAL ASUMIDO</p>
+                      <p className="section-description">
+                        Se reparte cada movimiento horario usando el perfil temporal declarado en Configuración. Los cuatro intervalos conservan exactamente los volúmenes horarios por movimiento y por acceso.
+                      </p>
+                      <div className="table-wrap">
+                        <table aria-label="Intervalos estimados TDPA">
+                          <thead>
+                            <tr><th>Intervalo</th><th>Sentido</th><th>Acceso</th><th>Izquierda</th><th>Frente</th><th>Derecha</th><th>Retorno</th><th>Total</th></tr>
+                          </thead>
+                          <tbody>
+                            {tdpaTemporalEstimate.intervals.flatMap((interval) => interval.accesses.map((access) => (
+                              <tr key={`${interval.index}-${access.accessId}`}>
+                                <td>{interval.label}</td>
+                                <td>{access.direction === 'main' ? 'Principal' : 'Opuesto'}</td>
+                                <td>{access.accessName}</td>
+                                <td>{access.movements.left.toLocaleString('es-MX')}</td>
+                                <td>{access.movements.through.toLocaleString('es-MX')}</td>
+                                <td>{access.movements.right.toLocaleString('es-MX')}</td>
+                                <td>{access.movements.uTurn.toLocaleString('es-MX')}</td>
+                                <td><strong>{access.total.toLocaleString('es-MX')}</strong></td>
+                              </tr>
+                            )))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  ) : (
+                    <section className="panel">
+                      <h3>Perfil temporal TDPA pendiente</h3>
+                      <p className="warning"><AlertTriangle size={16} /> No se generan valores de 15 minutos hasta declarar en Configuración un perfil temporal que sume exactamente 100%.</p>
+                      <button className="primary" onClick={() => goToStep(2)} type="button">Configurar perfil temporal TDPA</button>
+                    </section>
+                  )}
+
                   <p className="warning"><AlertTriangle size={16} /> Estimación TDPA: estos valores no sustituyen una medición física de movimientos, peatones, bicicletas, colas o ciclos observados.</p>
                 </>
               ) : (
@@ -1200,7 +1252,11 @@ export function WizardApp() {
                       <li>Cada acceso seleccionado distribuye exactamente 100% entre sus movimientos habilitados.</li>
                       <li>La suma de movimientos conserva el volumen horario de cada acceso.</li>
                       <li>La suma de ambos sentidos coincide con el volumen de hora de diseño.</li>
+                      {tdpaTemporalStatus?.valid && <li>El perfil temporal declarado contiene cuatro intervalos y suma exactamente 100%.</li>}
                     </ul>
+                    {!tdpaTemporalStatus?.valid && (
+                      <p className="warning"><AlertTriangle size={16} /> La estimación horaria es coherente, pero los intervalos de 15 minutos permanecerán sin generar hasta declarar un perfil temporal válido.</p>
+                    )}
                   </section>
                 </>
               ) : (
@@ -1305,6 +1361,7 @@ export function WizardApp() {
               source={activeStudy.source ?? 'observed'}
               tdpaEstimate={activeStudy.tdpaEstimate ?? null}
               tdpaTrafficEstimate={tdpaValidation?.estimate ?? null}
+              tdpaTemporalEstimate={tdpaTemporalEstimate}
               legacyUnverified={activeStudy.legacyUnverified ?? false}
             />
           </section>
