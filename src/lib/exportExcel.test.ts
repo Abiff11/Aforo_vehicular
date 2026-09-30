@@ -13,6 +13,7 @@ import {
 } from './study';
 import { intersections } from '../data/intersections';
 import { createTrafficStudyForIntersection, parseRoadTrafficCsv } from './roadTrafficImport';
+import { applyUniformTdpaTemporalDistribution } from './tdpaCorridorSettings';
 import type { Study } from './types';
 
 const roadTrafficCsv = `CARRETERA,"CLAVE CARRETERA",RUTA,"PUNTO GENERADOR",KM,TIPO,SC,TDPA2024,M,A,B,C2,C3,T3S2,T3S3,T3S2R4,OTROS,AUTOS,AUTOBUSES,CAMIONES,D,K',LAT,LONG
@@ -235,6 +236,51 @@ describe('exportStudyWorkbook calculation integrity', () => {
     expect(originMap.get('Volumen hora de diseño estimado')).toBe('Estimado');
     expect(indicatorMap.get('Volumen total observado')).toBe('N/D');
     expect(indicatorMap.get('FHP observado')).toBe('N/D');
+  });
+
+  it('exports complete TDPA traceability and conserves the design-hour volume in estimated intervals', () => {
+    const [record] = parseRoadTrafficCsv(roadTrafficCsv);
+    const { study: importedStudy } = createTrafficStudyForIntersection(record, intersections[0]);
+    const study: Study = {
+      ...importedStudy,
+      tdpaCorridorSettings: applyUniformTdpaTemporalDistribution(importedStudy),
+    };
+    const workbook = exportStudyWorkbook(study, intersections[0]);
+
+    expect(workbook.SheetNames).toEqual([
+      '01_FICHA_TECNICA',
+      '02_DASHBOARD',
+      '03_AFORO_DETALLADO',
+      '04_PROGRAMACION',
+      '05_COLAS_OPERACION',
+      '06_INDICADORES',
+      '07_INSTRUCTIVO',
+      '08_TDPA_ESTIMACION',
+    ]);
+
+    const tdpaRows = tableRows<Record<string, string | number>>(workbook.Sheets['08_TDPA_ESTIMACION']);
+    const metadata = new Map(
+      tdpaRows
+        .filter((row) => row.Tipo === 'Metadato')
+        .map((row) => [row.Concepto, row.Valor]),
+    );
+    const movementRows = tdpaRows.filter((row) => row.Tipo === 'Configuración movimiento');
+    const intervalRows = tdpaRows.filter((row) => row.Tipo === 'Intervalo estimado');
+
+    expect(metadata.get('Carretera')).toBe('Huajuapan de León - Oaxaca');
+    expect(metadata.get('Ruta')).toBe('MEX-190');
+    expect(metadata.get('Punto')).toBe('T. Aut. Cuacnopalan - Oaxaca');
+    expect(metadata.get('Año de referencia')).toBe(2024);
+    expect(metadata.get('TDPA')).toBe(24977);
+    expect(metadata.get("K'")).toBe(0.076);
+    expect(metadata.get('D')).toBe(0.511);
+    expect(metadata.get('Perfil temporal')).toBe('25% · 25% · 25% · 25%');
+    expect(movementRows).toHaveLength(2);
+    expect(movementRows[0]).toMatchObject({ IzquierdaPct: 10, FrentePct: 80, DerechaPct: 10, RetornoPct: 0 });
+    expect(new Set(intervalRows.map((row) => row.Intervalo)).size).toBe(4);
+    expect(intervalRows).toHaveLength(8);
+    expect(intervalRows.reduce((sum, row) => sum + Number(row.TotalVeh), 0)).toBe(1898);
+    expect(intervalRows.every((row) => row.Origen === 'Estimado TDPA')).toBe(true);
   });
 
   it('adds deliberate executive presentation metadata to all report sheets', () => {

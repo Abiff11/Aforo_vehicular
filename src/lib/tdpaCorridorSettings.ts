@@ -2,7 +2,6 @@ import { DEFAULT_MOVEMENT_DISTRIBUTION, validateMovementDistribution } from './r
 import {
   UNIFORM_TDPA_TEMPORAL_DISTRIBUTION,
   validateTdpaTemporalDistribution,
-  type TdpaTemporalDistribution,
 } from './tdpaTemporalProfile';
 import type {
   AccessConfig,
@@ -10,6 +9,7 @@ import type {
   Study,
   TdpaCorridorSettings,
   TdpaMovementDistribution,
+  TdpaTemporalDistribution,
 } from './types';
 
 const MOVEMENT_KEYS: MovementKey[] = ['left', 'through', 'right', 'uTurn'];
@@ -17,9 +17,7 @@ const PERCENT_TOLERANCE = 1e-9;
 
 type TdpaTemporalIndex = 0 | 1 | 2 | 3;
 
-export interface TdpaCorridorSettingsWithTemporal extends TdpaCorridorSettings {
-  temporalDistribution?: TdpaTemporalDistribution | null;
-}
+export type TdpaCorridorSettingsWithTemporal = TdpaCorridorSettings;
 
 function createDefaultDistribution(access: AccessConfig): TdpaMovementDistribution {
   const distribution: TdpaMovementDistribution = { ...DEFAULT_MOVEMENT_DISTRIBUTION };
@@ -47,9 +45,9 @@ function normalizeStoredDistribution(
   return distribution;
 }
 
-export function resolveTdpaCorridorSettings(study: Study): TdpaCorridorSettingsWithTemporal {
+export function resolveTdpaCorridorSettings(study: Study): TdpaCorridorSettings {
   const accesses = study.configurationSnapshot.accesses;
-  const stored = study.tdpaCorridorSettings as TdpaCorridorSettingsWithTemporal | null | undefined;
+  const stored = study.tdpaCorridorSettings;
   const accessIds = new Set(accesses.map((access) => access.id));
   const mainDirectionAccessId = stored && accessIds.has(stored.mainDirectionAccessId)
     ? stored.mainDirectionAccessId
@@ -83,7 +81,7 @@ export function updateTdpaMovementPercentage(
   accessId: string,
   movement: MovementKey,
   value: number,
-): TdpaCorridorSettingsWithTemporal {
+): TdpaCorridorSettings {
   const settings = resolveTdpaCorridorSettings(study);
   return {
     ...settings,
@@ -97,7 +95,7 @@ export function updateTdpaMovementPercentage(
   };
 }
 
-export function applyUniformTdpaTemporalDistribution(study: Study): TdpaCorridorSettingsWithTemporal {
+export function applyUniformTdpaTemporalDistribution(study: Study): TdpaCorridorSettings {
   const settings = resolveTdpaCorridorSettings(study);
   return {
     ...settings,
@@ -109,7 +107,7 @@ export function updateTdpaTemporalPercentage(
   study: Study,
   index: TdpaTemporalIndex,
   value: number,
-): TdpaCorridorSettingsWithTemporal {
+): TdpaCorridorSettings {
   const settings = resolveTdpaCorridorSettings(study);
   const temporalDistribution: [number, number, number, number] = settings.temporalDistribution
     ? [...settings.temporalDistribution]

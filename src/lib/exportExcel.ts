@@ -1,6 +1,9 @@
 import * as XLSX from 'xlsx-js-style';
 import type { Intersection, Study, StudySummary } from './types';
 import { calculateRowMotorizedTotal, calculateStudySummary } from './calculations';
+import { validateTdpaIntersectionEstimate } from './roadTrafficImport';
+import { resolveTdpaCorridorSettings } from './tdpaCorridorSettings';
+import { createTdpaTemporalEstimate, validateTdpaTemporalDistribution } from './tdpaTemporalProfile';
 
 const INCOMPLETE_WARNING = 'ESTUDIO INCOMPLETO — RESULTADOS PARCIALES — NO UTILIZAR COMO RESULTADO DEFINITIVO';
 const TDPA_WARNING = 'ESTIMACIÓN TDPA — NO SUSTITUYE UN AFORO DE INTERSECCIÓN EN CAMPO.';
@@ -466,6 +469,144 @@ function buildIndicatorsRows(summary: StudySummary): Array<Record<string, string
   return [...groupRows, ...cycleRows];
 }
 
+function formatTdpaPercentage(value: number): string {
+  return Number.isInteger(value) ? `${value}%` : `${value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}%`;
+}
+
+function createTdpaExportRow(
+  overrides: Record<string, string | number | null>,
+): Record<string, string | number | null> {
+  return {
+    Tipo: null,
+    Concepto: null,
+    Valor: null,
+    Sentido: null,
+    Acceso: null,
+    Intervalo: null,
+    PorcentajeTemporal: null,
+    IzquierdaPct: null,
+    FrentePct: null,
+    DerechaPct: null,
+    RetornoPct: null,
+    IzquierdaVeh: null,
+    FrenteVeh: null,
+    DerechaVeh: null,
+    RetornoVeh: null,
+    TotalVeh: null,
+    Origen: null,
+    ...overrides,
+  };
+}
+
+function buildTdpaEstimateRows(study: Study): Array<Record<string, string | number | null>> {
+  const estimate = study.tdpaEstimate;
+  const settings = resolveTdpaCorridorSettings(study);
+  const profile = settings.temporalDistribution;
+  const rows: Array<Record<string, string | number | null>> = [];
+
+  const addMetadata = (concept: string, value: string | number | null, origin = 'Estimado TDPA'): void => {
+    rows.push(createTdpaExportRow({ Tipo: 'Metadato', Concepto: concept, Valor: value, Origen: origin }));
+  };
+
+  if (!estimate) {
+    addMetadata('Estado de estimación', 'No existe una estimación TDPA asociada.');
+    return rows;
+  }
+
+  addMetadata('Carretera', estimate.road);
+  addMetadata('Ruta', estimate.route);
+  addMetadata('Punto', estimate.point);
+  addMetadata('Kilómetro', estimate.kilometer);
+  addMetadata('Año de referencia', estimate.referenceYear);
+  addMetadata('TDPA', estimate.dailyTraffic);
+  addMetadata("K'", estimate.designHourFactor);
+  addMetadata('D', estimate.directionalDistribution);
+  addMetadata('Volumen hora de diseño', estimate.designHourTotal);
+  addMetadata('Dirección principal', estimate.mainDirectionHour);
+  addMetadata('Dirección opuesta', estimate.oppositeDirectionHour);
+  addMetadata(
+    'Perfil temporal',
+    profile ? profile.map(formatTdpaPercentage).join(' · ') : null,
+    'Supuesto declarado por usuario',
+  );
+
+  const validation = validateTdpaIntersectionEstimate(
+    estimate,
+    study.configurationSnapshot.accesses,
+    settings,
+  );
+
+  if (!validation.valid || !validation.estimate) {
+    rows.push(createTdpaExportRow({
+      Tipo: 'Estado',
+      Concepto: 'Configuración TDPA',
+      Valor: validation.issues.join(' '),
+      Origen: 'Validación',
+    }));
+    return rows;
+  }
+
+  validation.estimate.accesses.forEach((access) => {
+    rows.push(createTdpaExportRow({
+      Tipo: 'Configuración movimiento',
+      Sentido: access.direction === 'main' ? 'Principal' : 'Opuesto',
+      Acceso: access.accessName,
+      IzquierdaPct: access.distribution.left,
+      FrentePct: access.distribution.through,
+      DerechaPct: access.distribution.right,
+      RetornoPct: access.distribution.uTurn,
+      IzquierdaVeh: access.movements.left,
+      FrenteVeh: access.movements.through,
+      DerechaVeh: access.movements.right,
+      RetornoVeh: access.movements.uTurn,
+      TotalVeh: access.hourlyVolume,
+      Origen: 'Estimado TDPA',
+    }));
+  });
+
+  if (!profile) {
+    rows.push(createTdpaExportRow({
+      Tipo: 'Estado',
+      Concepto: 'Perfil temporal',
+      Valor: 'N/D — no se generaron intervalos de 15 minutos porque no se declaró un perfil temporal.',
+      Origen: 'Supuesto pendiente',
+    }));
+    return rows;
+  }
+
+  const temporalIssues = validateTdpaTemporalDistribution(profile);
+  if (temporalIssues.length > 0) {
+    rows.push(createTdpaExportRow({
+      Tipo: 'Estado',
+      Concepto: 'Perfil temporal',
+      Valor: temporalIssues.join(' '),
+      Origen: 'Validación',
+    }));
+    return rows;
+  }
+
+  const temporalEstimate = createTdpaTemporalEstimate(validation.estimate, profile);
+  temporalEstimate.intervals.forEach((interval) => {
+    interval.accesses.forEach((access) => {
+      rows.push(createTdpaExportRow({
+        Tipo: 'Intervalo estimado',
+        Sentido: access.direction === 'main' ? 'Principal' : 'Opuesto',
+        Acceso: access.accessName,
+        Intervalo: interval.label,
+        PorcentajeTemporal: interval.sharePercent,
+        IzquierdaVeh: access.movements.left,
+        FrenteVeh: access.movements.through,
+        DerechaVeh: access.movements.right,
+        RetornoVeh: access.movements.uTurn,
+        TotalVeh: access.total,
+        Origen: 'Estimado TDPA',
+      }));
+    });
+  });
+
+  return rows;
+}
+
 function applyDashboardFormats(sheet: XLSX.WorkSheet): void {
   const range = XLSX.utils.decode_range(sheet['!ref'] ?? 'A1:A1');
   for (let row = TABLE_HEADER_ROW + 1; row <= range.e.r; row += 1) {
@@ -673,9 +814,23 @@ export function exportStudyWorkbook(study: Study, intersection: Intersection): X
       { Tema: 'Verde efectivo', Descripcion: 'No se infiere del verde programado; se captura por grupo movimiento–fase.' },
       { Tema: 'Capacidad', Descripcion: 'c = s × N × g/C por grupo movimiento–fase; no se calcula capacidad agregada de toda la intersección.' },
       { Tema: 'TDPA', Descripcion: 'TDPA × K\' y D producen estimaciones de hora de diseño; no sustituyen un aforo de intersección.' },
+      { Tema: 'Perfil temporal TDPA', Descripcion: 'Los cuatro intervalos de 15 minutos son estimados a partir de un perfil temporal declarado por el usuario; no provienen directamente del CSV TDPA.' },
     ], [26, 100], 'INSTRUCTIVO TÉCNICO', 'Criterios de lectura, trazabilidad y alcance del libro'),
     '07_INSTRUCTIVO',
   );
+
+  if ((study.source ?? 'observed') === 'estimated_tdpa') {
+    XLSX.utils.book_append_sheet(
+      workbook,
+      rowsToSheet(
+        buildTdpaEstimateRows(study),
+        [24, 32, 30, 14, 20, 18, 20, 16, 16, 16, 16, 16, 16, 16, 16, 16, 24],
+        'TRAZABILIDAD DE ESTIMACIÓN TDPA',
+        `${intersection.name} · ${study.metadata.date} · estimación TDPA · supuestos declarados`,
+      ),
+      '08_TDPA_ESTIMACION',
+    );
+  }
 
   return workbook;
 }

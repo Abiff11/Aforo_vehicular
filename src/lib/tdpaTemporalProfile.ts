@@ -1,11 +1,11 @@
 import type { IntersectionTrafficEstimate } from './roadTrafficImport';
-import type { MovementKey } from './types';
+import type { MovementKey, TdpaTemporalDistribution } from './types';
 
 const PERCENT_TOLERANCE = 1e-9;
 const MOVEMENT_KEYS: MovementKey[] = ['left', 'through', 'right', 'uTurn'];
 const INTERVAL_LABELS = ['0–15 min', '15–30 min', '30–45 min', '45–60 min'] as const;
 
-export type TdpaTemporalDistribution = readonly [number, number, number, number];
+export type { TdpaTemporalDistribution } from './types';
 export type TdpaTemporalAllocation = [number, number, number, number];
 
 export interface TdpaTemporalAccessEstimate {

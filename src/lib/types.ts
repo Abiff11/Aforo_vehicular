@@ -150,11 +150,13 @@ export interface TdpaEstimate {
 }
 
 export type TdpaMovementDistribution = Record<MovementKey, number>;
+export type TdpaTemporalDistribution = readonly [number, number, number, number];
 
 export interface TdpaCorridorSettings {
   mainDirectionAccessId: string;
   oppositeDirectionAccessId: string;
   movementDistributionByAccess: Record<string, TdpaMovementDistribution>;
+  temporalDistribution?: TdpaTemporalDistribution | null;
 }
 
 export interface Study {
